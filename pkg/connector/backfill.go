@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/rs/zerolog"
 	"google.golang.org/protobuf/proto"
@@ -237,6 +238,12 @@ func (c *GChatClient) fetchTopicMessages(ctx context.Context, params bridgev2.Fe
 	if threaded {
 		// Flat chats keep the request shape they always had; a flat topic is one message.
 		req.PageSizeForReplies = proto.Int32(threadReplyPageSize)
+	}
+	if params.Forward && params.AnchorMessage != nil {
+		// Every stale chat asks at startup; space the requests out instead of sending a burst.
+		if err := c.paceGapFill(ctx); err != nil {
+			return nil, err
+		}
 	}
 	resp, err := list(ctx, req)
 	if err != nil {
@@ -473,3 +480,23 @@ func (c *GChatClient) fetchThreadMessages(ctx context.Context, params bridgev2.F
 }
 
 // endregion
+
+// defaultGapFillSpacing is the minimum time between two forward gap-fill requests of one login.
+const defaultGapFillSpacing = 500 * time.Millisecond
+
+// paceGapFill serializes forward gap fills and keeps gapFillSpacing between them.
+func (c *GChatClient) paceGapFill(ctx context.Context) error {
+	spacing := c.gapFillSpacing
+	if spacing <= 0 {
+		spacing = defaultGapFillSpacing
+	}
+	c.gapFillMu.Lock()
+	defer c.gapFillMu.Unlock()
+	if wait := spacing - time.Since(c.lastGapFill); wait > 0 && !c.lastGapFill.IsZero() {
+		if err := syncSleepOrDone(ctx, wait); err != nil {
+			return err
+		}
+	}
+	c.lastGapFill = time.Now()
+	return nil
+}

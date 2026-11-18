@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/encoding/prototext"
 	"maunium.net/go/mautrix/bridgev2"
@@ -137,5 +138,35 @@ func TestBackwardBackfillKeepsOnlyWhatIsOlderThanTheAnchor(t *testing.T) {
 	})
 	if got := backfillIDs(resp); !sameIDs(got, "topic-a", "reply-a1") {
 		t.Errorf("backward batch = %v, want only what is older than the anchor", got)
+	}
+}
+
+// TestForwardGapFillsAreSpacedOut: the startup resync of many chats must not send a burst of list_topics.
+func TestForwardGapFillsAreSpacedOut(t *testing.T) {
+	var calls []time.Time
+	gc := newBackfillTestClient("1001", func(context.Context, *pb.ListTopicsRequest) (*pb.ListTopicsResponse, error) {
+		calls = append(calls, time.Now())
+		return &pb.ListTopicsResponse{}, nil
+	})
+	gc.gapFillSpacing = 40 * time.Millisecond
+	fetch := func(forward bool) {
+		t.Helper()
+		_, err := gc.FetchMessages(context.Background(), bridgev2.FetchMessagesParams{
+			Portal: threadedBackfillPortal(), Forward: forward, Count: 5, AnchorMessage: anchorAt("m", 1),
+		})
+		if err != nil {
+			t.Fatalf("FetchMessages: %v", err)
+		}
+	}
+	fetch(true)
+	fetch(true)
+	fetch(true)
+	if gap := calls[2].Sub(calls[0]); gap < 80*time.Millisecond {
+		t.Errorf("three gap fills took %v, want at least two spacings (80ms)", gap)
+	}
+	start := time.Now()
+	fetch(false)
+	if took := time.Since(start); took > 30*time.Millisecond {
+		t.Errorf("a backward fetch waited %v, want it unpaced", took)
 	}
 }

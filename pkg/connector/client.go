@@ -112,6 +112,11 @@ type GChatClient struct {
 
 	listTopicsFn func(ctx context.Context, req *pb.ListTopicsRequest) (*pb.ListTopicsResponse, error)
 
+	// gapFillMu, lastGapFill and gapFillSpacing pace forward gap fills (backfill.go); zero spacing means the default.
+	gapFillMu      sync.Mutex
+	lastGapFill    time.Time
+	gapFillSpacing time.Duration
+
 	listMessagesFn func(ctx context.Context, req *pb.ListMessagesRequest) (*pb.ListMessagesResponse, error)
 
 	getIntentForFn func(ctx context.Context, portal *bridgev2.Portal, sender bridgev2.EventSender, evtType bridgev2.RemoteEventType) (bridgev2.MatrixAPI, bool)
