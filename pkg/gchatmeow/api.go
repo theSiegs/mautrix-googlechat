@@ -71,6 +71,16 @@ type Client struct {
 	lastTokenRefresh    time.Time
 	refreshMu           sync.Mutex
 
+	// connCtx is the context of the running Connect (guarded by mu); nil when not connected.
+	connCtx context.Context
+
+	// sessionCheckRunning and lastSessionCheck (guarded by mu) single-flight and rate-limit suspectSession.
+	sessionCheckRunning bool
+	lastSessionCheck    time.Time
+
+	// nowFn replaces time.Now in tests; nil in production.
+	nowFn func() time.Time
+
 	// sleepFn replaces sleepOrDone in tests; nil in production.
 	sleepFn func(ctx context.Context, d time.Duration) error
 }
@@ -111,10 +121,17 @@ func (c *Client) doRequestNonIdempotent(ctx context.Context, endpoint string, re
 
 func (c *Client) doRequestWithPolicy(ctx context.Context, endpoint string, requestPB, responsePB proto.Message, idempotent bool) error {
 	err := c.doRequestOnce(ctx, endpoint, requestPB, responsePB, idempotent)
+	if isForbiddenStatus(err) {
+		// A 403 can be a per-request refusal or a dead session; let /mole/world decide.
+		c.suspectSession()
+	}
 	if err == nil || !isUnauthorizedStatus(err) {
 		return err
 	}
 	if refreshErr := c.refreshXSRFToken(ctx); refreshErr != nil {
+		if IsAuthError(refreshErr) {
+			c.suspectSession()
+		}
 		// Surface the original 401 so callers see a consistent auth signal.
 		return err
 	}

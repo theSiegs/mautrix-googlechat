@@ -257,6 +257,8 @@ if Google replays it.
 | HTTP 400 "Unknown SID" | bounded resync, then reconnect |
 | timeout / network error | backoff, `TRANSIENT_DISCONNECT` |
 | 401 / `invalid_grant` / signed-out `mole/world` | `BAD_CREDENTIALS`, user re-logs in |
+| 403, or 3 non-network failures in a row (incl. a `register` without `COMPASS`) | forced `mole/world` check; two sign-in pages 30 s apart are `BAD_CREDENTIALS` |
+| RPC 401 / 403 while connected | background `mole/world` check, at most one per 5 min |
 
 Events carry `user_revision` / `group_revision`, saved in login and portal
 metadata. `catchUp` (`catch_up_user`) replays missed events through the

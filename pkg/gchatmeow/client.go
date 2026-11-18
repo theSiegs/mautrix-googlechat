@@ -70,6 +70,9 @@ type ClientOpts struct {
 	UserAgent string
 	// BaseURLs redirects the client to a fake server in tests; leave zero in production.
 	BaseURLs BaseURLs
+	// Now and Sleep replace the clock in tests; nil means real time.
+	Now   func() time.Time
+	Sleep func(ctx context.Context, d time.Duration) error
 }
 
 // channelListener is the subset of *Channel that Client uses, so tests can inject a fake.
@@ -97,6 +100,8 @@ func NewClient(opts ClientOpts) (*Client, error) {
 		sidFatalRetryFloor:  defaultSIDFatalRetryFloor,
 		sidFatalRetryCap:    defaultSIDFatalRetryCap,
 		xsrfRefreshInterval: defaultXSRFRefreshInterval,
+		nowFn:               opts.Now,
+		sleepFn:             opts.Sleep,
 	}
 	opts.BaseURLs.apply(c)
 	c.newChannel = func() channelListener { return c.buildChannel() }
@@ -124,11 +129,13 @@ func (c *Client) Connect(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.mu.Lock()
 	c.cancel = cancel
+	c.connCtx = ctx
 	c.mu.Unlock()
 	defer func() {
 		cancel()
 		c.mu.Lock()
 		c.cancel = nil
+		c.connCtx = nil
 		c.channel = nil
 		c.mu.Unlock()
 	}()
@@ -138,8 +145,20 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	resyncCount := 0
+	// failures counts consecutive channel failures that are not plain network errors.
+	failures := 0
 	backoff := c.reconnectBackoffMin
 	fatalBackoff := c.fatalRetryFloor()
+
+	// transient reports a recoverable failure and waits out the backoff; false means stop.
+	transient := func(err error) bool {
+		c.emitState(ConnStateTransient, err)
+		if c.sleep(ctx, backoff) != nil {
+			return false
+		}
+		backoff = c.nextBackoff(backoff)
+		return true
+	}
 
 	for {
 		if ctx.Err() != nil {
@@ -154,11 +173,9 @@ func (c *Client) Connect(ctx context.Context) error {
 				c.emitState(ConnStateBadCredentials, err)
 				return err
 			}
-			c.emitState(ConnStateTransient, err)
-			if c.sleep(ctx, backoff) != nil {
+			if !transient(err) {
 				return nil
 			}
-			backoff = c.nextBackoff(backoff)
 			continue
 		}
 
@@ -174,13 +191,13 @@ func (c *Client) Connect(ctx context.Context) error {
 		switch {
 		case errors.Is(err, ErrChannelLifetimeExpired):
 			// 1.5h recycle: silent reconnect, no state change.
-			resyncCount = 0
+			resyncCount, failures = 0, 0
 			backoff = c.reconnectBackoffMin
 			// Only a full-lifetime channel proves health, so only it resets the post-fatal wait.
 			fatalBackoff = c.fatalRetryFloor()
 			continue
 		case errors.Is(err, ErrSIDExpiring):
-			resyncCount = 0
+			resyncCount, failures = 0, 0
 			backoff = c.reconnectBackoffMin
 			continue
 		case errors.Is(err, ErrSIDInvalid):
@@ -211,27 +228,33 @@ func (c *Client) Connect(ctx context.Context) error {
 			return err
 		case isNetworkError(err):
 			resyncCount = 0
-			c.emitState(ConnStateTransient, err)
-			if c.sleep(ctx, backoff) != nil {
+			if !transient(err) {
 				return nil
 			}
-			backoff = c.nextBackoff(backoff)
 			continue
 		case err == nil:
 			resyncCount = 0
-			c.emitState(ConnStateTransient, nil)
-			if c.sleep(ctx, backoff) != nil {
+			if !transient(nil) {
 				return nil
 			}
-			backoff = c.nextBackoff(backoff)
 			continue
 		default:
+			// A status other than 401, or a register without a session: the cookies may be dead.
 			resyncCount = 0
-			c.emitState(ConnStateTransient, err)
-			if c.sleep(ctx, backoff) != nil {
+			failures++
+			if failures >= deadSessionFailureThreshold || isForbiddenStatus(err) {
+				failures = 0
+				if c.verifySession(ctx) {
+					c.emitState(ConnStateBadCredentials, ErrNotLoggedIn)
+					return fmt.Errorf("%w (after: %v)", ErrNotLoggedIn, err)
+				}
+				if ctx.Err() != nil {
+					return nil
+				}
+			}
+			if !transient(err) {
 				return nil
 			}
-			backoff = c.nextBackoff(backoff)
 			continue
 		}
 	}
@@ -328,7 +351,7 @@ func SplitEventBodies(evt *pb.Event) []*pb.Event {
 // ensureToken refreshes the XSRF token when missing or older than xsrfRefreshInterval.
 func (c *Client) ensureToken(ctx context.Context) error {
 	c.mu.RLock()
-	fresh := c.xsrfToken != "" && (c.xsrfRefreshInterval <= 0 || time.Since(c.lastTokenRefresh) < c.xsrfRefreshInterval)
+	fresh := c.xsrfToken != "" && (c.xsrfRefreshInterval <= 0 || c.now().Sub(c.lastTokenRefresh) < c.xsrfRefreshInterval)
 	c.mu.RUnlock()
 	if fresh {
 		return nil
@@ -353,7 +376,7 @@ func (c *Client) refreshXSRFToken(ctx context.Context) error {
 	}
 	c.SetXSRFToken(token)
 	c.mu.Lock()
-	c.lastTokenRefresh = time.Now()
+	c.lastTokenRefresh = c.now()
 	c.mu.Unlock()
 	return nil
 }
@@ -461,12 +484,14 @@ func (c *Client) setChannel(ch channelListener) {
 	c.mu.Unlock()
 }
 
-// buildChannel makes a production channel for this client's session and overrides.
+// buildChannel makes a production channel with the session, overrides and clock of this client.
 func (c *Client) buildChannel() *Channel {
 	ch := NewChannel(c.session)
 	if c.channelBaseURL != "" {
 		ch.baseURL = c.channelBaseURL
 	}
+	ch.now = c.now
+	ch.sleep = c.sleep
 	return ch
 }
 

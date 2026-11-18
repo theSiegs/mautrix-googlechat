@@ -51,6 +51,10 @@ type Channel struct {
 
 	readIdleTimeout time.Duration
 
+	// now and sleep are the clock; the Client overrides them in tests.
+	now   func() time.Time
+	sleep func(ctx context.Context, d time.Duration) error
+
 	// parser is only touched from Listen's goroutine.
 	parser *ChunkParser
 
@@ -90,6 +94,8 @@ func NewChannel(session *Session) *Channel {
 		baseURL:         channelURLBase,
 		maxAge:          defaultChannelMaxAge,
 		readIdleTimeout: pushTimeout,
+		now:             time.Now,
+		sleep:           sleepOrDone,
 		// rid starts as a random int in [10000, 99999].
 		rid: 10000 + rand.Intn(90000),
 	}
@@ -140,20 +146,20 @@ func (ch *Channel) Listen(ctx context.Context, maxRetries int, retryBackoffBase 
 		return fmt.Errorf("register: %w", err)
 	}
 	ch.setCsessionid(csid)
-	start := time.Now()
+	start := ch.now()
 
 	for retries <= maxRetries {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		if time.Since(start) > ch.maxAge {
+		if ch.now().Sub(start) > ch.maxAge {
 			return ErrChannelLifetimeExpired
 		}
 		// Backoff is retryBackoffBase * 2^(retries-1).
 		if retries > 0 && !skipBackoff {
 			backoff := retryBackoffBase * time.Duration(1<<uint(retries-1))
-			if err := sleepOrDone(ctx, backoff); err != nil {
+			if err := ch.sleep(ctx, backoff); err != nil {
 				return err
 			}
 		}
@@ -234,7 +240,7 @@ func (ch *Channel) register(ctx context.Context) (string, error) {
 			}
 		}
 	}
-	return "", nil
+	return "", ErrRegisterNoSession
 }
 
 // longpollRequest opens one long-poll GET and reads arrays until it ends. Returns:
