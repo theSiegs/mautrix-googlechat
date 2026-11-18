@@ -378,6 +378,10 @@ func (c *GChatClient) saveCookies(ctx context.Context, onlyIfChanged bool) {
 			return false
 		}
 		cookies, userAgent := conn.Cookies(), conn.UserAgent()
+		// A config override must not replace the User-Agent captured at login.
+		if c.Main != nil && c.Main.Config.UserAgent != "" {
+			userAgent = meta.UserAgent
+		}
 		if onlyIfChanged && meta.UserAgent == userAgent && maps.Equal(meta.Cookies, cookies) {
 			return false
 		}

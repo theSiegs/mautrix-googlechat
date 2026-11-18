@@ -48,7 +48,8 @@ e.g. `!gc login`), then reply with either:
 
 - or, better, a request copied with DevTools → **Network** → any
   `chat.google.com` request → **Copy as cURL (bash)**. The bridge takes the
-  required and optional cookies and your browser's User-Agent from it. On Windows pick the bash
+  required and optional cookies and your browser's User-Agent from it, and
+  sends that User-Agent unchanged. On Windows pick the bash
   variant; the cmd one isn't understood.
 
 The bridge redacts your message, checks the cookies with Google and confirms

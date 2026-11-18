@@ -29,14 +29,3 @@ func (gc *GChatConnector) readOnly() bool {
 func (c *GChatClient) readOnly() bool {
 	return c.Main.readOnly()
 }
-
-// clientOpts builds the gchatmeow options for a login from its cookies, captured User-Agent and the config.
-func (gc *GChatConnector) clientOpts(cookies map[string]string, userAgent string) gchatmeow.ClientOpts {
-	opts := gchatmeow.ClientOpts{Cookies: cookies, UserAgent: userAgent}
-	if gc == nil {
-		return opts
-	}
-	opts.ReadOnly = gc.Config.ReadOnly
-	opts.BaseURLs = gc.baseURLs
-	return opts
-}

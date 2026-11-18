@@ -20,4 +20,24 @@ skip_leave_confirmation: false
 # mark chats read on Google Chat). The bridge refuses these before any
 # request leaves the process. Meant for archive-style setups.
 read_only: false
+# What the bridge tells Google about itself when it connects.
+#   active:   an open, focused Google Chat tab with notifications on. This is
+#             what the bridge has always sent.
+#   inactive: an idle background tab that shows no notifications itself, so
+#             the account does not look permanently active and your phone
+#             keeps getting notifications.
+presence: active
+# The bridge sends the User-Agent of the browser the cookies came from,
+# unchanged (the cURL login captures it). Set this to send another one.
+user_agent: ""
+# Constants of the Google Chat web client. Leave them empty (or 0) to use the
+# values built into the bridge; set one only if Google rotates it before the
+# bridge is updated.
+protocol:
+    # The `key` query parameter of every API call.
+    api_key: ""
+    # RequestHeader.client_version.
+    client_version: 0
+    # The `hs` query parameter of the /mole/world request.
+    mole_world_hs: ""
 # History backfill is configured in the top-level `backfill:` section.

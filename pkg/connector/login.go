@@ -215,7 +215,7 @@ func (gl *GChatLogin) SubmitCookies(ctx context.Context, cookies map[string]stri
 		ID: gcid.MakeUserLoginID(gaiaID),
 		Metadata: &UserLoginMetadata{
 			Cookies:   client.Cookies(),
-			UserAgent: client.UserAgent(),
+			UserAgent: capturedUserAgent(userAgent, client),
 		},
 	}, &bridgev2.NewLoginParams{
 		// Re-pasting cookies moves the login to whichever Matrix user submits them.
@@ -241,4 +241,12 @@ func (gl *GChatLogin) SubmitCookies(ctx context.Context, cookies map[string]stri
 			UserLogin:   ul,
 		},
 	}, nil
+}
+
+// capturedUserAgent is what gets stored: the pasted browser UA, or what the client sent when none was pasted.
+func capturedUserAgent(pasted string, client *gchatmeow.Client) string {
+	if pasted != "" {
+		return pasted
+	}
+	return client.UserAgent()
 }

@@ -59,9 +59,19 @@ Before any RPC, `GET /u/0/mole/world` returns HTML with
 `x-framework-xsrf-token` and refreshed about every 24 h (±20%). `qwAQke ==
 "AccountsSignInUi"` means the cookies are dead (`BAD_CREDENTIALS`).
 
-The web client's API key `AIzaSyD7InnYR3VKdb4j2rMUEbTCIr2VyEazl6k` and
-`RequestHeader.client_version` `2440378181258` are config values, so they can
-be bumped if Google rotates them.
+Three web-client constants can be overridden under `network.protocol` if
+Google rotates them before the bridge is updated; empty or zero means the
+built-in value (`gchatmeow.DefaultProtocol`):
+
+| Key | Built-in value | Sent as |
+|---|---|---|
+| `api_key` | `AIzaSyD7InnYR3VKdb4j2rMUEbTCIr2VyEazl6k` | `key` query param of every RPC |
+| `client_version` | `2440378181258` | `RequestHeader.client_version` |
+| `mole_world_hs` | a `gmail.pinto-server_20230730` shell-state blob | `hs` query param of `/mole/world` |
+
+The User-Agent captured at login is sent byte for byte, so it matches the
+browser that minted the cookies; `network.user_agent` overrides it without
+replacing the stored one.
 
 ### 2.2 Realtime: BrowserChannel
 
@@ -71,8 +81,11 @@ be bumped if Google rotates them.
    (`dynamite-ui=…`) that must be sent on later webchannel requests.
 2. The first `GET events` returns the SID in `X-HTTP-Initial-Response`.
 3. An immediate ack GET with the SID; required, reason unknown.
-4. A `PingEvent` (active, foreground, interactive) on the forward channel
-   (`POST events`, pblite in `req0_data`). Without it nothing is streamed.
+4. A `PingEvent` on the forward channel: active, foreground, interactive by
+   default; inactive, background, hidden with notifications off when
+   `network.presence` is `inactive`
+   (`POST events`, pblite in `req0_data`). Without a ping nothing is
+   streamed; whether the inactive one changes delivery is not live-verified.
 5. The server holds the response open about an hour and streams chunks;
    `["noop"]` is a keep-alive.
 
@@ -315,7 +328,8 @@ normal IP works.
 | Backfill, catch-up | `backfill.go`, §4 |
 | Login | `login.go` |
 
-Not supported: presence (bridgev2 has no model for it) and room avatars (a
+Not supported: bridging presence (bridgev2 has no model for it; the own
+presence the bridge declares is `network.presence`) and room avatars (a
 space icon is an emoji). `ImplicitReadReceipts` stays false because Google
 Chat marks your own messages read.
 
