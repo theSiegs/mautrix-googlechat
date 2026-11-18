@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -72,9 +73,10 @@ type ClientOpts struct {
 	BaseURLs BaseURLs
 	// ReadOnly refuses every call that would change the account (sends, receipts, typing, uploads).
 	ReadOnly bool
-	// Now and Sleep replace the clock in tests; nil means real time.
+	// Now and Sleep replace the clock in tests; nil means real time. Rand replaces the jitter source.
 	Now   func() time.Time
 	Sleep func(ctx context.Context, d time.Duration) error
+	Rand  func() float64
 }
 
 // channelListener is the subset of *Channel that Client uses, so tests can inject a fake.
@@ -105,6 +107,11 @@ func NewClient(opts ClientOpts) (*Client, error) {
 		readOnly:            opts.ReadOnly,
 		nowFn:               opts.Now,
 		sleepFn:             opts.Sleep,
+		xsrfSleepFn:         opts.Sleep,
+		randFn:              opts.Rand,
+	}
+	if c.randFn == nil {
+		c.randFn = rand.Float64
 	}
 	opts.BaseURLs.apply(c)
 	c.newChannel = func() channelListener { return c.buildChannel() }
@@ -155,8 +162,13 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	// transient reports a recoverable failure and waits out the backoff; false means stop.
 	transient := func(err error) bool {
+		// A channel that reached Connected was healthy: start the ladder again.
+		if c.sawConnected.Swap(false) {
+			backoff = c.reconnectBackoffMin
+			failures = 0
+		}
 		c.emitState(ConnStateTransient, err)
-		if c.sleep(ctx, backoff) != nil {
+		if c.sleep(ctx, c.jitter(backoff)) != nil {
 			return false
 		}
 		backoff = c.nextBackoff(backoff)
@@ -186,6 +198,7 @@ func (c *Client) Connect(ctx context.Context) error {
 		c.wireChannel(ch)
 		c.setChannel(ch)
 
+		c.sawConnected.Store(false)
 		err := ch.Listen(ctx, c.maxRetries, c.retryBackoffBase)
 
 		if ctx.Err() != nil {
@@ -211,7 +224,7 @@ func (c *Client) Connect(ctx context.Context) error {
 				c.emitState(ConnStateFatal, err)
 				// Drop the dead channel so SendStreamEvent fails fast during the wait.
 				c.setChannel(nil)
-				if c.sleep(ctx, fatalBackoff) != nil {
+				if c.sleep(ctx, c.jitter(fatalBackoff)) != nil {
 					return nil
 				}
 				fatalBackoff = c.growFatalBackoff(fatalBackoff)
@@ -220,7 +233,7 @@ func (c *Client) Connect(ctx context.Context) error {
 				continue
 			}
 			// Pace resyncs with a growing backoff (do not reset to min).
-			if c.sleep(ctx, backoff) != nil {
+			if c.sleep(ctx, c.jitter(backoff)) != nil {
 				return nil
 			}
 			backoff = c.nextBackoff(backoff)
@@ -289,8 +302,8 @@ func (c *Client) SendStreamEvent(ctx context.Context, req *pb.StreamEventsReques
 // Events during a reconnect gap are not replayed; the connector must catch up.
 func (c *Client) wireChannel(ch channelListener) {
 	ch.SetOnReceiveArray(c.onReceiveArray)
-	ch.SetOnConnect(func(ctx context.Context) { c.emitState(ConnStateConnected, nil) })
-	ch.SetOnReconnect(func(ctx context.Context) { c.emitState(ConnStateConnected, nil) })
+	ch.SetOnConnect(func(ctx context.Context) { c.sawConnected.Store(true); c.emitState(ConnStateConnected, nil) })
+	ch.SetOnReconnect(func(ctx context.Context) { c.sawConnected.Store(true); c.emitState(ConnStateConnected, nil) })
 	ch.SetOnDisconnect(func(ctx context.Context) { c.emitState(ConnStateTransient, nil) })
 }
 
@@ -390,43 +403,63 @@ func (c *Client) refreshXSRFToken(ctx context.Context) error {
 // xsrfRefreshAuthFailuresBeforeGivingUp is two so a single spurious sign-in page doesn't kill a healthy session.
 const xsrfRefreshAuthFailuresBeforeGivingUp = 2
 
-// xsrfRefreshLoop refreshes the token periodically. Network failures are ignored; confirmed auth failures report bad credentials and disconnect.
+// xsrfRefreshLoop refreshes the token about every xsrfRefreshInterval (jittered). Network failures are ignored;
+// confirmed auth failures report bad credentials and disconnect.
 func (c *Client) xsrfRefreshLoop(ctx context.Context) {
-	ticker := time.NewTicker(c.xsrfRefreshInterval)
-	defer ticker.Stop()
 	authFails := 0
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			err := c.refreshXSRFToken(ctx)
-			if err == nil {
-				authFails = 0
-				continue
-			}
-			if ctx.Err() != nil {
-				return
-			}
-			if !IsAuthError(err) {
-				// Reset so only consecutive auth failures count.
-				authFails = 0
-				log.Warn().Err(err).Msg("gchatmeow: periodic XSRF refresh failed")
-				continue
-			}
-			authFails++
-			if authFails < xsrfRefreshAuthFailuresBeforeGivingUp {
-				log.Warn().Err(err).Int("consecutive", authFails).
-					Msg("gchatmeow: XSRF refresh was rejected as unauthenticated; waiting for confirmation")
-				continue
-			}
-			log.Warn().Err(err).Int("consecutive", authFails).
-				Msg("gchatmeow: XSRF refresh rejected as unauthenticated twice; treating the session as logged out")
-			c.emitState(ConnStateBadCredentials, err)
-			c.Disconnect()
+		if c.xsrfSleep(ctx, c.jitter(c.xsrfRefreshInterval)) != nil {
 			return
 		}
+		err := c.refreshXSRFToken(ctx)
+		if err == nil {
+			authFails = 0
+			continue
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		if !IsAuthError(err) {
+			// Reset so only consecutive auth failures count.
+			authFails = 0
+			log.Warn().Err(err).Msg("gchatmeow: periodic XSRF refresh failed")
+			continue
+		}
+		authFails++
+		if authFails < xsrfRefreshAuthFailuresBeforeGivingUp {
+			log.Warn().Err(err).Int("consecutive", authFails).
+				Msg("gchatmeow: XSRF refresh was rejected as unauthenticated; waiting for confirmation")
+			continue
+		}
+		log.Warn().Err(err).Int("consecutive", authFails).
+			Msg("gchatmeow: XSRF refresh rejected as unauthenticated twice; treating the session as logged out")
+		c.emitState(ConnStateBadCredentials, err)
+		c.Disconnect()
+		return
 	}
+}
+
+// jitterFraction spreads every recurring interval by this much either way, so the bridge has no exact cadence.
+const jitterFraction = 0.2
+
+// jitter returns d scaled by a random factor in [1-jitterFraction, 1+jitterFraction]; no rand source means d.
+func (c *Client) jitter(d time.Duration) time.Duration {
+	if c.randFn == nil || d <= 0 {
+		return d
+	}
+	// Serialized: the supervisor and the refresh loop both draw, and a caller-supplied source may not be safe.
+	c.randMu.Lock()
+	r := c.randFn()
+	c.randMu.Unlock()
+	return time.Duration(float64(d) * (1 - jitterFraction + 2*jitterFraction*r))
+}
+
+// xsrfSleep is the wait of the refresh loop, so tests that skip supervisor sleeps do not spin the loop.
+func (c *Client) xsrfSleep(ctx context.Context, d time.Duration) error {
+	if c.xsrfSleepFn != nil {
+		return c.xsrfSleepFn(ctx, d)
+	}
+	return sleepOrDone(ctx, d)
 }
 
 // sleep waits for d or until ctx is done; tests override it via sleepFn.
@@ -496,6 +529,8 @@ func (c *Client) buildChannel() *Channel {
 	if c.channelBaseURL != "" {
 		ch.baseURL = c.channelBaseURL
 	}
+	ch.maxAge = c.jitter(defaultChannelMaxAge)
+	ch.jitter = c.jitter
 	ch.now = c.now
 	ch.sleep = c.sleep
 	return ch

@@ -56,7 +56,7 @@ the browser User-Agent, all in `UserLoginMetadata`.
 
 Before any RPC, `GET /u/0/mole/world` returns HTML with
 `window.WIZ_global_data`. `SMqcke` is the XSRF token, sent as
-`x-framework-xsrf-token` and refreshed about every 24 h. `qwAQke ==
+`x-framework-xsrf-token` and refreshed about every 24 h (±20%). `qwAQke ==
 "AccountsSignInUi"` means the cookies are dead (`BAD_CREDENTIALS`).
 
 The web client's API key `AIzaSyD7InnYR3VKdb4j2rMUEbTCIr2VyEazl6k` and
@@ -264,13 +264,18 @@ if Google replays it.
 
 | Condition | Response |
 |---|---|
-| channel ~1.5 h old | silent recycle |
+| channel ~1.5 h old (±20%) | silent recycle |
 | payload error / SID expiring | re-register at once |
 | HTTP 400 "Unknown SID" | bounded resync, then reconnect |
-| timeout / network error | backoff, `TRANSIENT_DISCONNECT` |
+| timeout / network error | backoff 4 s doubling to 60 s (±20%), reset once a channel reaches Connected; `TRANSIENT_DISCONNECT` |
 | 401 / `invalid_grant` / signed-out `mole/world` | `BAD_CREDENTIALS`, user re-logs in |
 | 403, or 3 non-network failures in a row (incl. a `register` without `COMPASS`) | forced `mole/world` check; two sign-in pages 30 s apart are `BAD_CREDENTIALS` |
 | RPC 401 / 403 while connected | background `mole/world` check, at most one per 5 min |
+
+Every recurring interval (channel recycle, XSRF refresh, each backoff) is
+spread by ±20% so the bridge has no exact cadence. The clock and the random
+source are injectable (`ClientOpts.Now`, `Sleep`, `Rand`); tests drive them
+with `gchattest.Clock`.
 
 Events carry `user_revision` / `group_revision`, saved in login and portal
 metadata. `catchUp` (`catch_up_user`) replays missed events through the

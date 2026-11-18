@@ -36,7 +36,7 @@ const (
 
 	channelProtocolVersion = "8"
 
-	// defaultChannelMaxAge is the 1.5h lifetime recycle.
+	// defaultChannelMaxAge is the 1.5h lifetime recycle, jittered per channel by the Client.
 	defaultChannelMaxAge = 90 * time.Minute
 )
 
@@ -51,9 +51,10 @@ type Channel struct {
 
 	readIdleTimeout time.Duration
 
-	// now and sleep are the clock; the Client overrides them in tests.
-	now   func() time.Time
-	sleep func(ctx context.Context, d time.Duration) error
+	// jitter spreads retry backoffs; now and sleep are the clock. The Client sets all three.
+	jitter func(time.Duration) time.Duration
+	now    func() time.Time
+	sleep  func(ctx context.Context, d time.Duration) error
 
 	// parser is only touched from Listen's goroutine.
 	parser *ChunkParser
@@ -94,6 +95,7 @@ func NewChannel(session *Session) *Channel {
 		baseURL:         channelURLBase,
 		maxAge:          defaultChannelMaxAge,
 		readIdleTimeout: pushTimeout,
+		jitter:          func(d time.Duration) time.Duration { return d },
 		now:             time.Now,
 		sleep:           sleepOrDone,
 		// rid starts as a random int in [10000, 99999].
@@ -159,7 +161,7 @@ func (ch *Channel) Listen(ctx context.Context, maxRetries int, retryBackoffBase 
 		// Backoff is retryBackoffBase * 2^(retries-1).
 		if retries > 0 && !skipBackoff {
 			backoff := retryBackoffBase * time.Duration(1<<uint(retries-1))
-			if err := ch.sleep(ctx, backoff); err != nil {
+			if err := ch.sleep(ctx, ch.jitter(backoff)); err != nil {
 				return err
 			}
 		}

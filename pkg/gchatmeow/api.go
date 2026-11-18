@@ -84,6 +84,16 @@ type Client struct {
 	// nowFn replaces time.Now in tests; nil in production.
 	nowFn func() time.Time
 
+	// sawConnected is set when the current channel reports Connected; the supervisor resets its backoff on it.
+	sawConnected atomic.Bool
+
+	// randFn is the jitter source in [0,1); nil disables jitter (struct-literal test clients).
+	randFn func() float64
+	randMu sync.Mutex
+
+	// xsrfSleepFn replaces the refresh wait in tests; nil in production.
+	xsrfSleepFn func(ctx context.Context, d time.Duration) error
+
 	// sleepFn replaces sleepOrDone in tests; nil in production.
 	sleepFn func(ctx context.Context, d time.Duration) error
 }
