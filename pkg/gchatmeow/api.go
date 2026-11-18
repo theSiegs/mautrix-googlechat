@@ -44,6 +44,9 @@ type Client struct {
 
 	uploadBaseURL string
 
+	// channelBaseURL overrides the webchannel base; empty means production.
+	channelBaseURL string
+
 	// OnStreamEvent is called per event, in order, from the Connect goroutine. Set before Connect.
 	OnStreamEvent func(ctx context.Context, ev *pb.Event)
 	// OnConnectionState reports connection-state transitions from the Connect goroutine. Set before Connect.

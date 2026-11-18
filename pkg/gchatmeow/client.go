@@ -68,6 +68,8 @@ type ClientOpts struct {
 	Cookies map[string]string
 	// UserAgent is the browser UA; empty uses the default.
 	UserAgent string
+	// BaseURLs redirects the client to a fake server in tests; leave zero in production.
+	BaseURLs BaseURLs
 }
 
 // channelListener is the subset of *Channel that Client uses, so tests can inject a fake.
@@ -96,7 +98,8 @@ func NewClient(opts ClientOpts) (*Client, error) {
 		sidFatalRetryCap:    defaultSIDFatalRetryCap,
 		xsrfRefreshInterval: defaultXSRFRefreshInterval,
 	}
-	c.newChannel = func() channelListener { return NewChannel(c.session) }
+	opts.BaseURLs.apply(c)
+	c.newChannel = func() channelListener { return c.buildChannel() }
 	return c, nil
 }
 
@@ -456,4 +459,13 @@ func (c *Client) setChannel(ch channelListener) {
 	c.mu.Lock()
 	c.channel = ch
 	c.mu.Unlock()
+}
+
+// buildChannel makes a production channel for this client's session and overrides.
+func (c *Client) buildChannel() *Channel {
+	ch := NewChannel(c.session)
+	if c.channelBaseURL != "" {
+		ch.baseURL = c.channelBaseURL
+	}
+	return ch
 }
