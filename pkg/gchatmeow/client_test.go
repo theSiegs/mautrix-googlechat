@@ -647,7 +647,7 @@ func TestClientFetchXSRFTokenNotLoggedIn(t *testing.T) {
 	}
 }
 
-// TestClientUserAgent: UserAgent returns the normalized UA Session actually sends.
+// TestClientUserAgent: UserAgent returns the UA Session actually sends.
 func TestClientUserAgent(t *testing.T) {
 	c, err := NewClient(ClientOpts{})
 	if err != nil {
@@ -661,8 +661,8 @@ func TestClientUserAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	if got := c2.UserAgent(); !strings.Contains(got, "Chrome/"+latestChromeVersion+".0.0.0") {
-		t.Errorf("UserAgent() = %q, want Chrome version rewritten to %s", got, latestChromeVersion)
+	if got := c2.UserAgent(); got != "Mozilla/5.0 Chrome/100.0.4321.10 Firefox/99.5" {
+		t.Errorf("UserAgent() = %q, want the supplied value unchanged", got)
 	}
 }
 

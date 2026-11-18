@@ -19,7 +19,6 @@ import (
 	"unicode/utf16"
 
 	"github.com/rs/zerolog/log"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/Deniel9204/mautrix-googlechat/pkg/gchatmeow/pblite"
 	pb "github.com/Deniel9204/mautrix-googlechat/pkg/gchatmeow/proto"
@@ -50,6 +49,9 @@ type Channel struct {
 	maxAge time.Duration
 
 	readIdleTimeout time.Duration
+
+	// presence selects the initial ping; empty means active.
+	presence Presence
 
 	// jitter spreads retry backoffs; now and sleep are the clock. The Client sets all three.
 	jitter func(time.Duration) time.Duration
@@ -508,12 +510,7 @@ func (ch *Channel) adoptSID(ctx context.Context, sid string) error {
 
 // sendInitialPing sends the PingEvent that starts the stream. Callers must hold sendMu.
 func (ch *Channel) sendInitialPing(ctx context.Context) error {
-	ping := &pb.PingEvent{
-		State:                      pb.PingEvent_ACTIVE.Enum(),
-		ApplicationFocusState:      pb.PingEvent_FOCUS_STATE_FOREGROUND.Enum(),
-		ClientInteractiveState:     pb.PingEvent_INTERACTIVE.Enum(),
-		ClientNotificationsEnabled: proto.Bool(true),
-	}
+	ping := ch.presence.pingEvent()
 	return ch.sendStreamEventLocked(ctx, &pb.StreamEventsRequest{PingEvent: ping})
 }
 

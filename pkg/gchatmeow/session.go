@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,9 +24,8 @@ const (
 
 	retryBackoffBase = 50 * time.Millisecond
 
-	// Plausibly-current browser versions for the User-Agent; bump occasionally.
-	latestChromeVersion  = "150"
-	latestFirefoxVersion = "152"
+	// latestChromeVersion is the Chrome version of the default User-Agent; bump occasionally.
+	latestChromeVersion = "150"
 
 	defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + latestChromeVersion + ".0.0.0 Safari/537.36"
 
@@ -38,8 +36,6 @@ const (
 )
 
 var (
-	chromeVersionRegex  = regexp.MustCompile(`Chrome/\d+\.\d+\.\d+\.\d+`)
-	firefoxVersionRegex = regexp.MustCompile(`Firefox/\d+.\d+`)
 
 	// Auth cookies are only sent to / absorbed from these hosts.
 	// googleusercontent.com is deliberately excluded: those hops must be cookie-less.
@@ -71,6 +67,9 @@ type Session struct {
 
 	// moleWorldBaseURL overrides FetchXSRFToken's base URL in tests; empty means production.
 	moleWorldBaseURL string
+
+	// moleWorldHS overrides the hs query param of /mole/world; empty means the default.
+	moleWorldHS string
 }
 
 // NewSession builds a Session from cookies (legacy names upper-cased, others kept) and a User-Agent (empty means default).
@@ -105,12 +104,11 @@ func NewSession(cookies map[string]string, userAgent string) (*Session, error) {
 	}, nil
 }
 
+// normalizeUserAgent keeps a supplied User-Agent byte for byte, so it matches the browser that minted the cookies.
 func normalizeUserAgent(userAgent string) string {
 	if userAgent == "" {
 		return defaultUserAgent
 	}
-	userAgent = chromeVersionRegex.ReplaceAllString(userAgent, "Chrome/"+latestChromeVersion+".0.0.0")
-	userAgent = firefoxVersionRegex.ReplaceAllString(userAgent, "Firefox/"+latestFirefoxVersion+".0")
 	return userAgent
 }
 
@@ -124,7 +122,7 @@ func DefaultUserAgent() string {
 	return defaultUserAgent
 }
 
-// UserAgent returns the normalized User-Agent applied to every request.
+// UserAgent returns the User-Agent applied to every request.
 func (s *Session) UserAgent() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

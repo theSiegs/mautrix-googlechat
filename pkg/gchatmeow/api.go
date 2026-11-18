@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	// apiKey is the `key` query param; without it /api/* returns 403.
+	// apiKey is the default `key` query param; without it /api/* returns 403.
 	apiKey = "AIzaSyD7InnYR3VKdb4j2rMUEbTCIr2VyEazl6k"
 
 	apiBaseURL = "https://chat.google.com/u/0"
@@ -77,6 +77,12 @@ type Client struct {
 	// sessionCheckRunning and lastSessionCheck (guarded by mu) single-flight and rate-limit suspectSession.
 	sessionCheckRunning bool
 	lastSessionCheck    time.Time
+
+	// protocol holds the rotatable web-client constants; zero fields mean the defaults.
+	protocol Protocol
+
+	// presence selects the channel ping.
+	presence Presence
 
 	// readOnly refuses every mutating call before any HTTP.
 	readOnly bool
@@ -161,7 +167,7 @@ func (c *Client) doRequestOnce(ctx context.Context, endpoint string, requestPB, 
 	params.Set("c", strconv.FormatInt(counter, 10))
 	params.Set("rt", "b")
 	params.Set("alt", "proto")
-	params.Set("key", apiKey)
+	params.Set("key", c.protocol.withDefaults().APIKey)
 
 	base := c.baseURL
 	if base == "" {
@@ -212,161 +218,161 @@ func unmarshalAPIResponse(body []byte, responsePB proto.Message) error {
 
 // GetUserPresence returns presence for one or more users.
 func (c *Client) GetUserPresence(ctx context.Context, req *pb.GetUserPresenceRequest) (*pb.GetUserPresenceResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.GetUserPresenceResponse{}
 	return resp, c.call(ctx, "get_user_presence", req, resp)
 }
 
 // GetMembers resolves user/member info by id.
 func (c *Client) GetMembers(ctx context.Context, req *pb.GetMembersRequest) (*pb.GetMembersResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.GetMembersResponse{}
 	return resp, c.call(ctx, "get_members", req, resp)
 }
 
 // PaginatedWorld lists all conversations; used for chat sync.
 func (c *Client) PaginatedWorld(ctx context.Context, req *pb.PaginatedWorldRequest) (*pb.PaginatedWorldResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.PaginatedWorldResponse{}
 	return resp, c.call(ctx, "paginated_world", req, resp)
 }
 
 // GetSelfUserStatus returns the current user's own status.
 func (c *Client) GetSelfUserStatus(ctx context.Context, req *pb.GetSelfUserStatusRequest) (*pb.GetSelfUserStatusResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.GetSelfUserStatusResponse{}
 	return resp, c.call(ctx, "get_self_user_status", req, resp)
 }
 
 // GetGroup fetches one group/DM, including membership.
 func (c *Client) GetGroup(ctx context.Context, req *pb.GetGroupRequest) (*pb.GetGroupResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.GetGroupResponse{}
 	return resp, c.call(ctx, "get_group", req, resp)
 }
 
 // MarkGroupReadstate sends a read receipt.
 func (c *Client) MarkGroupReadstate(ctx context.Context, req *pb.MarkGroupReadstateRequest) (*pb.MarkGroupReadstateResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.MarkGroupReadstateResponse{}
 	return resp, c.call(ctx, "mark_group_readstate", req, resp)
 }
 
 // CreateTopic sends a message that starts a new thread.
 func (c *Client) CreateTopic(ctx context.Context, req *pb.CreateTopicRequest) (*pb.CreateTopicResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.CreateTopicResponse{}
 	return resp, c.call(ctx, "create_topic", req, resp)
 }
 
 // CreateMessage sends a message into an existing thread.
 func (c *Client) CreateMessage(ctx context.Context, req *pb.CreateMessageRequest) (*pb.CreateMessageResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.CreateMessageResponse{}
 	return resp, c.call(ctx, "create_message", req, resp)
 }
 
 // UpdateReaction adds or removes an emoji reaction.
 func (c *Client) UpdateReaction(ctx context.Context, req *pb.UpdateReactionRequest) (*pb.UpdateReactionResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.UpdateReactionResponse{}
 	return resp, c.call(ctx, "update_reaction", req, resp)
 }
 
 // DeleteMessage deletes a message.
 func (c *Client) DeleteMessage(ctx context.Context, req *pb.DeleteMessageRequest) (*pb.DeleteMessageResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.DeleteMessageResponse{}
 	return resp, c.call(ctx, "delete_message", req, resp)
 }
 
 // EditMessage edits message text.
 func (c *Client) EditMessage(ctx context.Context, req *pb.EditMessageRequest) (*pb.EditMessageResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.EditMessageResponse{}
 	return resp, c.call(ctx, "edit_message", req, resp)
 }
 
 // SetTypingState sends a typing notification.
 func (c *Client) SetTypingState(ctx context.Context, req *pb.SetTypingStateRequest) (*pb.SetTypingStateResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.SetTypingStateResponse{}
 	return resp, c.call(ctx, "set_typing_state", req, resp)
 }
 
 // CatchUpUser replays missed events since a revision. Both catch-up endpoints return CatchUpResponse.
 func (c *Client) CatchUpUser(ctx context.Context, req *pb.CatchUpUserRequest) (*pb.CatchUpResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.CatchUpResponse{}
 	return resp, c.call(ctx, "catch_up_user", req, resp)
 }
 
 // CatchUpGroup replays missed events for one group since a revision.
 func (c *Client) CatchUpGroup(ctx context.Context, req *pb.CatchUpGroupRequest) (*pb.CatchUpResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.CatchUpResponse{}
 	return resp, c.call(ctx, "catch_up_group", req, resp)
 }
 
 // ListTopics pages through topics of a group.
 func (c *Client) ListTopics(ctx context.Context, req *pb.ListTopicsRequest) (*pb.ListTopicsResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.ListTopicsResponse{}
 	return resp, c.call(ctx, "list_topics", req, resp)
 }
 
 // ListMessages pages through messages of a topic.
 func (c *Client) ListMessages(ctx context.Context, req *pb.ListMessagesRequest) (*pb.ListMessagesResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.ListMessagesResponse{}
 	return resp, c.call(ctx, "list_messages", req, resp)
 }
 
 // CreateMembership adds members to a space. Spaces only.
 func (c *Client) CreateMembership(ctx context.Context, req *pb.CreateMembershipRequest) (*pb.CreateMembershipResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.CreateMembershipResponse{}
 	return resp, c.call(ctx, "create_membership", req, resp)
 }
 
 // RemoveMemberships removes members from a space; removing yourself is a leave. Spaces only.
 func (c *Client) RemoveMemberships(ctx context.Context, req *pb.RemoveMembershipsRequest) (*pb.RemoveMembershipsResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.RemoveMembershipsResponse{}
 	return resp, c.call(ctx, "remove_memberships", req, resp)
 }
 
 // CreateDm creates or returns the existing DM; Invitees takes an email when the gaia id is unknown.
 func (c *Client) CreateDm(ctx context.Context, req *pb.CreateDmRequest) (*pb.CreateDmResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.CreateDmResponse{}
 	return resp, c.call(ctx, "create_dm", req, resp)
 }
 
 // CreateGroup creates a space. Not live-verified: real accounts get a bare HTTP 400.
 func (c *Client) CreateGroup(ctx context.Context, req *pb.CreateGroupRequest) (*pb.CreateGroupResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.CreateGroupResponse{}
 	return resp, c.call(ctx, "create_group", req, resp)
 }
 
 // UpdateGroupNotificationSettings mutes or unmutes one conversation.
 func (c *Client) UpdateGroupNotificationSettings(ctx context.Context, req *pb.UpdateGroupNotificationSettingsRequest) (*pb.UpdateGroupNotificationSettingsResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.UpdateGroupNotificationSettingsResponse{}
 	return resp, c.call(ctx, "update_group_notification_settings", req, resp)
 }
 
 // HideGroup hides or unhides a conversation in the user's chat list (the only way to put a DM away).
 func (c *Client) HideGroup(ctx context.Context, req *pb.HideGroupRequest) (*pb.HideGroupResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.HideGroupResponse{}
 	return resp, c.call(ctx, "hide_group", req, resp)
 }
 
 // UpdateGroup updates a space's metadata (used to rename). Spaces only.
 func (c *Client) UpdateGroup(ctx context.Context, req *pb.UpdateGroupRequest) (*pb.UpdateGroupResponse, error) {
-	req.RequestHeader = newRequestHeader()
+	req.RequestHeader = c.requestHeader()
 	resp := &pb.UpdateGroupResponse{}
 	return resp, c.call(ctx, "update_group", req, resp)
 }

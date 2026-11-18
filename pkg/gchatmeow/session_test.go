@@ -322,16 +322,14 @@ func TestFetchRawReturnsRawResponseNoRetry(t *testing.T) {
 	}
 }
 
-func TestUserAgentVersionRewrite(t *testing.T) {
-	sess, err := NewSession(nil, "Mozilla/5.0 Chrome/100.0.4321.10 Safari/537.36")
+func TestUserAgentIsKeptVerbatim(t *testing.T) {
+	const pasted = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4321.10 Safari/537.36"
+	sess, err := NewSession(nil, pasted)
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	if !strings.Contains(sess.userAgent, "Chrome/"+latestChromeVersion+".0.0.0") {
-		t.Errorf("userAgent = %q, want Chrome version rewritten to %s.0.0.0", sess.userAgent, latestChromeVersion)
-	}
-	if strings.Contains(sess.userAgent, "Chrome/100.") {
-		t.Errorf("userAgent = %q still carries the caller's Chrome version", sess.userAgent)
+	if sess.userAgent != pasted {
+		t.Errorf("userAgent = %q, want the pasted value byte for byte", sess.userAgent)
 	}
 }
 

@@ -12,7 +12,7 @@ import (
 const (
 	defaultMoleWorldBaseURL = "https://chat.google.com/u/0"
 
-	// moleWorldHS is the hardcoded gmail shell-state blob sent as the "hs" query param.
+	// moleWorldHS is the default gmail shell-state blob sent as the "hs" query param.
 	moleWorldHS = `["h_hs",null,null,[1,0],null,null,"gmail.pinto-server_20230730.06_p0",1,null,[15,38,36,35,26,30,41,18,24,11,21,14,6],null,null,"3Mu86PSulM4.en..es5",0,null,null,[0]]`
 
 	// accountsSignInUi is the qwAQke value that signals invalid/expired cookies.
@@ -29,12 +29,16 @@ func (s *Session) FetchXSRFToken(ctx context.Context) (string, error) {
 		baseURL = defaultMoleWorldBaseURL
 	}
 
+	hs := s.moleWorldHS
+	if hs == "" {
+		hs = moleWorldHS
+	}
 	qs := url.Values{
 		"origin": {"https://mail.google.com"},
 		"shell":  {"9"},
 		"hl":     {"en"},
 		"wfi":    {"gtn-roster-iframe-id"},
-		"hs":     {moleWorldHS},
+		"hs":     {hs},
 	}
 	reqURL := baseURL + "/mole/world?" + qs.Encode()
 

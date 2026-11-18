@@ -67,10 +67,14 @@ func (s ConnState) String() string {
 type ClientOpts struct {
 	// Cookies is the auth cookie set (COMPASS/SSID/SID/OSID/HSID).
 	Cookies map[string]string
-	// UserAgent is the browser UA; empty uses the default.
+	// UserAgent is the browser UA, sent byte for byte; empty uses the default.
 	UserAgent string
 	// BaseURLs redirects the client to a fake server in tests; leave zero in production.
 	BaseURLs BaseURLs
+	// Presence selects the channel ping; empty means PresenceActive.
+	Presence Presence
+	// Protocol overrides the rotatable web-client constants; zero fields mean the defaults.
+	Protocol Protocol
 	// ReadOnly refuses every call that would change the account (sends, receipts, typing, uploads).
 	ReadOnly bool
 	// Now and Sleep replace the clock in tests; nil means real time. Rand replaces the jitter source.
@@ -105,6 +109,8 @@ func NewClient(opts ClientOpts) (*Client, error) {
 		sidFatalRetryCap:    defaultSIDFatalRetryCap,
 		xsrfRefreshInterval: defaultXSRFRefreshInterval,
 		readOnly:            opts.ReadOnly,
+		protocol:            opts.Protocol.withDefaults(),
+		presence:            opts.Presence,
 		nowFn:               opts.Now,
 		sleepFn:             opts.Sleep,
 		xsrfSleepFn:         opts.Sleep,
@@ -113,6 +119,7 @@ func NewClient(opts ClientOpts) (*Client, error) {
 	if c.randFn == nil {
 		c.randFn = rand.Float64
 	}
+	sess.moleWorldHS = c.protocol.MoleWorldHS
 	opts.BaseURLs.apply(c)
 	c.newChannel = func() channelListener { return c.buildChannel() }
 	return c, nil
@@ -123,7 +130,7 @@ func (c *Client) Cookies() map[string]string {
 	return c.session.Cookies()
 }
 
-// UserAgent returns the normalized User-Agent actually sent, for persistence.
+// UserAgent returns the User-Agent actually sent, for persistence.
 func (c *Client) UserAgent() string {
 	return c.session.UserAgent()
 }
@@ -529,6 +536,7 @@ func (c *Client) buildChannel() *Channel {
 	if c.channelBaseURL != "" {
 		ch.baseURL = c.channelBaseURL
 	}
+	ch.presence = c.presence
 	ch.maxAge = c.jitter(defaultChannelMaxAge)
 	ch.jitter = c.jitter
 	ch.now = c.now
