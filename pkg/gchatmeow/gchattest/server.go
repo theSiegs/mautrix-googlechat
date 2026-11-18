@@ -56,6 +56,7 @@ type Server struct {
 	api           map[string]APIHandler
 	moleMode      MoleWorldMode
 	moleStatus    int
+	moleOnce      []MoleWorldMode
 	registerNoCSI bool
 	registerCode  int
 	eventsCode    int
@@ -108,6 +109,13 @@ func (s *Server) SetMoleWorld(mode MoleWorldMode, status int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.moleMode, s.moleStatus = mode, status
+}
+
+// QueueMoleWorld makes the next /mole/world answers use modes, one each, before the SetMoleWorld page returns.
+func (s *Server) QueueMoleWorld(modes ...MoleWorldMode) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.moleOnce = append(s.moleOnce, modes...)
 }
 
 // SetRegister makes register omit its COMPASS cookie and/or answer with status (0 means 200).
@@ -218,6 +226,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveMoleWorld(w http.ResponseWriter) {
 	s.mu.Lock()
 	mode, status := s.moleMode, s.moleStatus
+	if len(s.moleOnce) > 0 {
+		mode, s.moleOnce = s.moleOnce[0], s.moleOnce[1:]
+	}
 	s.mu.Unlock()
 	if status != 0 {
 		w.WriteHeader(status)

@@ -14,7 +14,7 @@ const (
 	deadSessionFailureThreshold = 3
 	// sessionCheckConfirmDelay separates the two sign-in pages needed to call a session dead.
 	sessionCheckConfirmDelay = 30 * time.Second
-	// sessionCheckMinInterval limits checks triggered by RPC 401/403s, which may be per-request refusals.
+	// sessionCheckMinInterval limits forced checks: a 403 may be a per-request refusal, not a dead session.
 	sessionCheckMinInterval = 5 * time.Minute
 )
 
@@ -59,6 +59,18 @@ func (c *Client) forceTokenRefresh(ctx context.Context) error {
 	c.lastTokenRefresh = c.now()
 	c.mu.Unlock()
 	return nil
+}
+
+// sessionCheckDue reports whether a forced check is allowed now, and claims the slot if so.
+func (c *Client) sessionCheckDue() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now()
+	if c.sessionCheckRunning || (!c.lastSessionCheck.IsZero() && now.Sub(c.lastSessionCheck) < sessionCheckMinInterval) {
+		return false
+	}
+	c.lastSessionCheck = now
+	return true
 }
 
 // suspectSession starts one rate-limited background session check after an RPC came back 401 or 403.

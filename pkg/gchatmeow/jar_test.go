@@ -133,3 +133,14 @@ func TestCookieChangeCallbackFiresOnlyOnRealChanges(t *testing.T) {
 		t.Errorf("after rotation: %d callbacks, want 2 and the rotated value stored", changes)
 	}
 }
+
+func TestStaleUpperCasedSecureNamesAreDropped(t *testing.T) {
+	sess, err := NewSession(map[string]string{"__SECURE-1PSIDTS": "stale", "__Secure-1PSIDTS": "live", "SID": "s"}, "")
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	got := sess.Cookies()
+	if len(got) != 2 || got["__Secure-1PSIDTS"] != "live" {
+		t.Errorf("Cookies() has %d entries, want SID and the properly cased __Secure-1PSIDTS only", len(got))
+	}
+}

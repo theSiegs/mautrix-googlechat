@@ -23,6 +23,8 @@ const (
 	// defaultReconnectBackoffMin/Max bound the transient backoff (x2, capped).
 	defaultReconnectBackoffMin = 4 * time.Second
 	defaultReconnectBackoffMax = 60 * time.Second
+	// defaultMinHealthyChannel is how long a channel must stay connected before a drop resets the backoff.
+	defaultMinHealthyChannel = time.Minute
 	// defaultXSRFRefreshInterval is the token-staleness window.
 	defaultXSRFRefreshInterval = 24 * time.Hour
 	// maxSIDInvalidResyncs consecutive SID-invalid resyncs make the connection fatal.
@@ -110,6 +112,7 @@ func NewClient(opts ClientOpts) (*Client, error) {
 		sidFatalRetryFloor:  defaultSIDFatalRetryFloor,
 		sidFatalRetryCap:    defaultSIDFatalRetryCap,
 		xsrfRefreshInterval: defaultXSRFRefreshInterval,
+		minHealthyChannel:   defaultMinHealthyChannel,
 		readOnly:            opts.ReadOnly,
 		observer:            opts.Observer,
 		protocol:            opts.Protocol.withDefaults(),
@@ -146,6 +149,17 @@ func (c *Client) FetchXSRFToken(ctx context.Context) error {
 // Connect runs the supervision loop on the caller's goroutine, which also runs every callback in order.
 // It blocks until ctx is cancelled or Disconnect is called, and returns the error for bad credentials.
 func (c *Client) Connect(ctx context.Context) error {
+	c.dead.Store(false)
+	err := c.supervise(ctx)
+	// A background session check may have found the logout and cancelled the loop.
+	if err == nil && c.dead.Load() {
+		err = ErrNotLoggedIn
+	}
+	return err
+}
+
+// supervise is the body of Connect.
+func (c *Client) supervise(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.mu.Lock()
 	c.cancel = cancel
@@ -172,8 +186,8 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	// transient reports a recoverable failure and waits out the backoff; false means stop.
 	transient := func(err error) bool {
-		// A channel that reached Connected was healthy: start the ladder again.
-		if c.sawConnected.Swap(false) {
+		// A channel that stayed connected for a while was healthy: start the ladder again.
+		if c.sawConnected.Swap(false) && c.now().Sub(time.Unix(0, c.connectedAt.Load())) >= c.minHealthyChannel {
 			backoff = c.reconnectBackoffMin
 			failures = 0
 		}
@@ -194,9 +208,13 @@ func (c *Client) Connect(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			if IsAuthError(err) {
+			// With a token in hand the session worked before, so one sign-in page needs confirming.
+			if IsAuthError(err) && (c.XSRFToken() == "" || c.verifySession(ctx)) {
 				c.emitState(ConnStateBadCredentials, err)
 				return err
+			}
+			if ctx.Err() != nil {
+				return nil
 			}
 			if !transient(err) {
 				return nil
@@ -268,7 +286,7 @@ func (c *Client) Connect(ctx context.Context) error {
 			// A status other than 401, or a register without a session: the cookies may be dead.
 			resyncCount = 0
 			failures++
-			if failures >= deadSessionFailureThreshold || isForbiddenStatus(err) {
+			if (failures >= deadSessionFailureThreshold || isForbiddenStatus(err)) && c.sessionCheckDue() {
 				failures = 0
 				if c.verifySession(ctx) {
 					c.emitState(ConnStateBadCredentials, ErrNotLoggedIn)
@@ -313,6 +331,7 @@ func (c *Client) SendStreamEvent(ctx context.Context, req *pb.StreamEventsReques
 func (c *Client) wireChannel(ch channelListener) {
 	ch.SetOnReceiveArray(c.onReceiveArray)
 	connected := func(ctx context.Context) {
+		c.connectedAt.Store(c.now().UnixNano())
 		c.sawConnected.Store(true)
 		c.obs().ChannelConnected()
 		c.emitState(ConnStateConnected, nil)
@@ -525,6 +544,14 @@ func (c *Client) nextBackoff(cur time.Duration) time.Duration {
 }
 
 func (c *Client) emitState(state ConnState, err error) {
+	// Bad credentials is final for this Connect: report it once and nothing after it.
+	if state == ConnStateBadCredentials {
+		if c.dead.Swap(true) {
+			return
+		}
+	} else if c.dead.Load() {
+		return
+	}
 	if c.OnConnectionState != nil {
 		c.OnConnectionState(state, err)
 	}

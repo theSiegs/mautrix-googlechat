@@ -222,7 +222,10 @@ func (ch *Channel) register(ctx context.Context) (string, error) {
 	headers := http.Header{"Content-Type": {"application/x-protobuf"}}
 	resp, err := ch.session.FetchRaw(ctx, http.MethodGet, ch.baseURL+"register?ignore_compass_cookie=1", headers, nil)
 	if err != nil {
-		return "", fmt.Errorf("register request: %w", err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
+		return "", &NetworkError{Err: fmt.Errorf("register request: %w", err)}
 	}
 	defer resp.Body.Close()
 

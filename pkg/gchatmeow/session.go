@@ -76,6 +76,10 @@ type Session struct {
 func NewSession(cookies map[string]string, userAgent string) (*Session, error) {
 	jar := newCookieJar()
 	for name, value := range cookies {
+		// Older versions upper-cased every stored name; the real cookie is kept under its proper case.
+		if strings.HasPrefix(name, "__SECURE-") || strings.HasPrefix(name, "__HOST-") {
+			continue
+		}
 		jar.set(canonicalCookieName(name), value)
 	}
 

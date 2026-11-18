@@ -95,7 +95,12 @@ type Client struct {
 	nowFn func() time.Time
 
 	// sawConnected is set when the current channel reports Connected; the supervisor resets its backoff on it.
-	sawConnected atomic.Bool
+	sawConnected      atomic.Bool
+	connectedAt       atomic.Int64
+	minHealthyChannel time.Duration
+
+	// dead latches once bad credentials was reported for the running Connect.
+	dead atomic.Bool
 
 	// randFn is the jitter source in [0,1); nil disables jitter (struct-literal test clients).
 	randFn func() float64

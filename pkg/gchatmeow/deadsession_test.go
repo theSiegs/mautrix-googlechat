@@ -212,3 +212,37 @@ func TestRejectedRPCTriggersARateLimitedSessionCheck(t *testing.T) {
 		t.Errorf("session checks = %d, want 3 (one live, two to confirm the logout)", got)
 	}
 }
+
+// TestStaleTokenNeedsTwoSignInPages: one spurious sign-in page at a token refresh must not log a live session out.
+func TestStaleTokenNeedsTwoSignInPages(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		pages   []gchattest.MoleWorldMode
+		wantBad int
+	}{
+		{"one page then fine", []gchattest.MoleWorldMode{gchattest.MoleWorldSignedOut}, 0},
+		{"three pages in a row", []gchattest.MoleWorldMode{gchattest.MoleWorldSignedOut, gchattest.MoleWorldSignedOut, gchattest.MoleWorldSignedOut}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := gchattest.New(t)
+			clock := gchattest.NewClock()
+			c, log := fakeClockClient(t, srv, clock, gchatmeow.ClientOpts{})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if err := c.FetchXSRFToken(ctx); err != nil {
+				t.Fatalf("FetchXSRFToken: %v", err)
+			}
+			clock.Advance(48 * time.Hour)
+			srv.QueueMoleWorld(tc.pages...)
+			done := connectUntilDone(ctx, c)
+			waitUntil(t, "Connected or a verdict", func() bool {
+				return log.count(gchatmeow.ConnStateConnected)+log.count(gchatmeow.ConnStateBadCredentials) > 0
+			})
+			cancel()
+			<-done
+			if got := log.count(gchatmeow.ConnStateBadCredentials); got != tc.wantBad {
+				t.Errorf("bad credentials reported %d times, want %d", got, tc.wantBad)
+			}
+		})
+	}
+}
