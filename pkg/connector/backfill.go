@@ -182,11 +182,14 @@ func groupRevision(evt *pb.Event) int64 {
 
 // region history backfill
 
-// ListMessages can only list replies within one topic, so room history comes from a single ListTopics call
-// (no page token exists), taking each topic's first reply as the message.
+// Room history comes from one list_topics call: the proto has no page token, so only the newest
+// page is reachable (docs/ARCHITECTURE.md §2.9). Every reply the server returns is emitted.
 
 // defaultFetchMessagesCount is used when bridgev2 passes a non-positive params.Count.
 const defaultFetchMessagesCount = 20
+
+// threadReplyPageSize is page_size_for_replies, sent only for threaded portals.
+const threadReplyPageSize = 20
 
 var _ bridgev2.BackfillingNetworkAPI = (*GChatClient)(nil)
 
@@ -196,25 +199,22 @@ func (c *GChatClient) FetchMessages(ctx context.Context, params bridgev2.FetchMe
 	if params.ThreadRoot != "" {
 		return c.fetchThreadMessages(ctx, params)
 	}
-	if params.Forward && params.AnchorMessage != nil {
-		// Forward catch-up on an existing room: list_topics can't query newer-than-X, and catch_up_user covers it.
-		return &bridgev2.FetchMessagesResponse{HasMore: false}, nil
-	}
-	// The backward queue and the new-room forward seed (the only path on non-batch-send homeservers) land here.
-	return c.fetchTopicHeadMessages(ctx, params)
+	// Backward queue, new-room forward seed, and the forward gap fill after downtime all land here.
+	return c.fetchTopicMessages(ctx, params)
 }
 
-// fetchTopicHeadMessages fetches top-level history in one list_topics call, using each topic's replies[0].
-// Topics in a ThreadsOnly portal, or with thread_created_usec > 0, get ShouldBackfillThread.
-func (c *GChatClient) fetchTopicHeadMessages(ctx context.Context, params bridgev2.FetchMessagesParams) (*bridgev2.FetchMessagesResponse, error) {
+// fetchTopicMessages fetches the newest list_topics page and emits every reply on the wanted side of the anchor:
+// newer for a forward gap fill, older for backward history. Thread topics get ShouldBackfillThread on their head.
+func (c *GChatClient) fetchTopicMessages(ctx context.Context, params bridgev2.FetchMessagesParams) (*bridgev2.FetchMessagesResponse, error) {
 	group, err := gcid.ParsePortalID(params.Portal.ID)
 	if err != nil {
 		return nil, fmt.Errorf("googlechat: invalid portal id %q: %w", params.Portal.ID, err)
 	}
 
-	threadsOnly := false
+	threadsOnly, threaded := false, false
 	if meta, ok := params.Portal.Metadata.(*PortalMetadata); ok && meta != nil {
 		threadsOnly = meta.ThreadsOnly
+		threaded = meta.ThreadsOnly || meta.ThreadsEnabled
 	}
 
 	count := params.Count
@@ -230,10 +230,15 @@ func (c *GChatClient) fetchTopicHeadMessages(ctx context.Context, params bridgev
 		}
 		list = conn.ListTopics
 	}
-	resp, err := list(ctx, &pb.ListTopicsRequest{
+	req := &pb.ListTopicsRequest{
 		GroupId:           gchatmeow.PartsToGroupID(group.ID, group.IsDM),
 		PageSizeForTopics: proto.Int32(int32(count)),
-	})
+	}
+	if threaded {
+		// Flat chats keep the request shape they always had; a flat topic is one message.
+		req.PageSizeForReplies = proto.Int32(threadReplyPageSize)
+	}
+	resp, err := list(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("googlechat: list_topics failed: %w", err)
 	}
@@ -248,20 +253,27 @@ func (c *GChatClient) fetchTopicHeadMessages(ctx context.Context, params bridgev
 		return cmp.Compare(a.GetId().GetTopicId(), b.GetId().GetTopicId())
 	})
 
-	getIntent := c.getIntentForFn
-	if getIntent == nil {
-		getIntent = func(ctx context.Context, portal *bridgev2.Portal, sender bridgev2.EventSender, evtType bridgev2.RemoteEventType) (bridgev2.MatrixAPI, bool) {
-			return portal.GetIntentFor(ctx, sender, c.UserLogin, evtType)
-		}
-	}
-	convert := convertMessageToMatrix(c.msgConverter(), c)
-
 	hasAnchor := params.AnchorMessage != nil
+	forwardGap := params.Forward && hasAnchor
 	var anchorMicros int64
 	if hasAnchor {
 		anchorMicros = gchatmeow.TimeToMicros(params.AnchorMessage.Timestamp)
 	}
+	// wanted drops the anchor and the wrong side of it. Strict comparisons keep same-microsecond siblings.
+	wanted := func(msg *pb.Message) bool {
+		if !hasAnchor {
+			return true
+		}
+		if gcid.MakeMessageID(msg.GetId().GetMessageId()) == params.AnchorMessage.ID {
+			return false
+		}
+		if forwardGap {
+			return msg.GetCreateTime() >= anchorMicros
+		}
+		return msg.GetCreateTime() <= anchorMicros
+	}
 
+	build := c.backfillMessageBuilder(ctx, params.Portal)
 	log := zerolog.Ctx(ctx)
 	messages := make([]*bridgev2.BackfillMessage, 0, len(topics))
 	for _, topic := range topics {
@@ -269,58 +281,80 @@ func (c *GChatClient) fetchTopicHeadMessages(ctx context.Context, params bridgev
 		if len(replies) == 0 {
 			continue
 		}
-		msg := replies[0]
+		isThread := threadsOnly || topic.GetTopicReadState().GetThreadCreatedUsec() > 0
+		for i, msg := range replies {
+			if msg.GetId().GetMessageId() == "" {
+				log.Warn().Msg("googlechat: backfill topic reply has no message id, skipping")
+				continue
+			}
+			if !wanted(msg) {
+				continue
+			}
+			bm, ok := build(msg)
+			if !ok {
+				continue
+			}
+			// LastThreadMessage is not read by bridgev2 yet; set for forward compatibility.
+			if i == 0 && isThread {
+				bm.ShouldBackfillThread = true
+				bm.LastThreadMessage = bm.ID
+				if lastID := replies[len(replies)-1].GetId().GetMessageId(); lastID != "" {
+					bm.LastThreadMessage = gcid.MakeMessageID(lastID)
+				}
+			}
+			messages = append(messages, bm)
+		}
+	}
+	// Replies of different topics interleave in time; bridgev2 wants one chronological batch.
+	slices.SortStableFunc(messages, func(a, b *bridgev2.BackfillMessage) int {
+		return cmp.Compare(a.StreamOrder, b.StreamOrder)
+	})
+
+	// Older history exists unless this page holds the first topic, but without a page token asking
+	// again returns the same page: only report more when this call made progress.
+	hasMore := !params.Forward && !resp.GetContainsFirstTopic() && len(messages) > 0
+	return &bridgev2.FetchMessagesResponse{
+		Messages: messages,
+		HasMore:  hasMore,
+		Forward:  params.Forward,
+		Cursor:   "",
+	}, nil
+}
+
+// backfillMessageBuilder returns a func converting one Google Chat message to a BackfillMessage; false means skip it.
+func (c *GChatClient) backfillMessageBuilder(ctx context.Context, portal *bridgev2.Portal) func(msg *pb.Message) (*bridgev2.BackfillMessage, bool) {
+	getIntent := c.getIntentForFn
+	if getIntent == nil {
+		getIntent = func(ctx context.Context, portal *bridgev2.Portal, sender bridgev2.EventSender, evtType bridgev2.RemoteEventType) (bridgev2.MatrixAPI, bool) {
+			return portal.GetIntentFor(ctx, sender, c.UserLogin, evtType)
+		}
+	}
+	convert := convertMessageToMatrix(c.msgConverter(), c)
+	return func(msg *pb.Message) (*bridgev2.BackfillMessage, bool) {
 		gcMessageID := msg.GetId().GetMessageId()
-		if gcMessageID == "" {
-			log.Warn().Msg("googlechat: backfill topic head reply has no message id, skipping")
-			continue
-		}
-		msgID := gcid.MakeMessageID(gcMessageID)
-		// Drop the anchor and anything strictly newer. Not `>=`: that would drop distinct messages sharing the anchor's microsecond.
-		if hasAnchor && (msgID == params.AnchorMessage.ID || msg.GetCreateTime() > anchorMicros) {
-			continue
-		}
 		senderID := gcid.MakeUserID(msg.GetCreator().GetUserId().GetId())
 		sender := bridgev2.EventSender{
 			Sender:   senderID,
 			IsFromMe: c.IsThisUser(ctx, senderID),
 		}
-		intent, ok := getIntent(ctx, params.Portal, sender, bridgev2.RemoteEventBackfill)
+		intent, ok := getIntent(ctx, portal, sender, bridgev2.RemoteEventBackfill)
 		if !ok {
-			continue
+			return nil, false
 		}
-		cm, err := convert(ctx, params.Portal, intent, msg)
+		cm, err := convert(ctx, portal, intent, msg)
 		if err != nil {
-			log.Err(err).Str("gc_message_id", gcMessageID).Msg("googlechat: failed to convert backfill message, skipping")
-			continue
+			zerolog.Ctx(ctx).Err(err).Str("gc_message_id", gcMessageID).Msg("googlechat: failed to convert backfill message, skipping")
+			return nil, false
 		}
 		// Reactions left nil: GC's Reaction proto has only counts, no reactor id, so they can't be attributed.
-		// Pinned by TestFetchMessagesFlatOmitsReactionsEvenWhenGCMessageHasThem.
-		bm := &bridgev2.BackfillMessage{
+		return &bridgev2.BackfillMessage{
 			ConvertedMessage: cm,
 			Sender:           sender,
-			ID:               msgID,
+			ID:               gcid.MakeMessageID(gcMessageID),
 			Timestamp:        gchatmeow.MicrosToTime(msg.GetCreateTime()),
 			StreamOrder:      msg.GetCreateTime(),
-		}
-		// LastThreadMessage is not read by bridgev2 yet; set for forward compatibility.
-		if isThread := threadsOnly || topic.GetTopicReadState().GetThreadCreatedUsec() > 0; isThread {
-			bm.ShouldBackfillThread = true
-			bm.LastThreadMessage = msgID
-			if last := replies[len(replies)-1]; last != msg {
-				if lastID := last.GetId().GetMessageId(); lastID != "" {
-					bm.LastThreadMessage = gcid.MakeMessageID(lastID)
-				}
-			}
-		}
-		messages = append(messages, bm)
+		}, true
 	}
-
-	return &bridgev2.FetchMessagesResponse{
-		Messages: messages,
-		HasMore:  false,
-		Cursor:   "",
-	}, nil
 }
 
 // endregion

@@ -171,7 +171,7 @@ which is why every message stores `TimestampMicro` and `TopicID`.
 | `update_reaction` | reactions |
 | `set_typing_state` | typing |
 | `mark_group_readstate` | read receipts (µs) |
-| `list_topics` / `list_messages` | backfill |
+| `list_topics` / `list_messages` | backfill (§2.9) |
 | `catch_up_group` / `catch_up_user` | missed events |
 | `create_membership` / `remove_memberships` | invite, accept, kick, leave (spaces) |
 | `create_group` | create a space; needs `attribute_checker_group_type = FLAT_ROOM` or it fails with a bare 400 |
@@ -181,6 +181,27 @@ which is why every message stores `TimestampMicro` and `TopicID`.
 
 Mutating responses return `WriteRevision{timestamp}`, used as resync
 watermarks (§4).
+
+### 2.9 History: `list_topics`
+
+Room history is one `list_topics` call per fetch, newest page first. Every
+reply the server returns is emitted; replies of a thread carry their thread
+root, and the head of a thread still asks bridgev2 for a `list_messages`
+thread backfill. `page_size_for_replies` is sent only for threaded portals,
+so flat chats (one message per topic) keep their request shape.
+
+- Backward: messages older than the oldest bridged one. `HasMore` is
+  `!contains_first_topic`, but only while a call still adds messages.
+- Forward with an anchor: messages newer than the newest bridged one. This
+  is the gap fill bridgev2 runs on a `ChatResync`, so messages that arrived
+  while the bridge was down are recovered even when catch-up cannot.
+
+Known gap: there is no way to ask for an older page. The request has no
+page token, and the fields that would select a range (`filter`,
+`sort_option`) are commented out in the proto because their wire shape is
+unknown. History therefore ends at one page (`backfill.max_initial_messages`
+/ `backfill.queue.batch_size` topics). Do not guess these fields; take them
+from a capture or from purple-googlechat.
 
 ## 3. Data flow
 

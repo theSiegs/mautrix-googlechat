@@ -1,0 +1,22 @@
+# A short DM whose page reaches the very first topic.
+topics {
+  id { topic_id: "dm-2" }
+  sort_time: 20
+  replies {
+    id { message_id: "dm-2" parent_id { topic_id { topic_id: "dm-2" } } }
+    creator { user_id { id: "2002" } }
+    create_time: 20
+    text_body: "hello Alex"
+  }
+}
+topics {
+  id { topic_id: "dm-1" }
+  sort_time: 10
+  replies {
+    id { message_id: "dm-1" parent_id { topic_id { topic_id: "dm-1" } } }
+    creator { user_id { id: "1001" } }
+    create_time: 10
+    text_body: "hello Sam"
+  }
+}
+contains_first_topic: true

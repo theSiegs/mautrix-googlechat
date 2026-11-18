@@ -1,0 +1,35 @@
+# A threaded space page, newest topic first: one thread with three replies, one single-message topic.
+topics {
+  id { topic_id: "topic-b" }
+  sort_time: 400
+  replies {
+    id { message_id: "topic-b" parent_id { topic_id { topic_id: "topic-b" } } }
+    creator { user_id { id: "2002" } }
+    create_time: 400
+    text_body: "Sam: lunch on Friday?"
+  }
+}
+topics {
+  id { topic_id: "topic-a" }
+  sort_time: 300
+  topic_read_state { thread_created_usec: 150 }
+  replies {
+    id { message_id: "topic-a" parent_id { topic_id { topic_id: "topic-a" } } }
+    creator { user_id { id: "1001" } }
+    create_time: 100
+    text_body: "Alex: the report is ready"
+  }
+  replies {
+    id { message_id: "reply-a1" parent_id { topic_id { topic_id: "topic-a" } } }
+    creator { user_id { id: "2002" } }
+    create_time: 200
+    text_body: "Sam: thanks"
+  }
+  replies {
+    id { message_id: "reply-a2" parent_id { topic_id { topic_id: "topic-a" } } }
+    creator { user_id { id: "1001" } }
+    create_time: 300
+    text_body: "Alex: any comments?"
+  }
+}
+contains_first_topic: false

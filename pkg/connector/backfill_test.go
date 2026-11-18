@@ -951,32 +951,6 @@ func TestFetchMessagesFlatSortTimeTieBreaksByTopicID(t *testing.T) {
 	}
 }
 
-func TestFetchMessagesFlatServerReturnsFewerThanRequestedSetsHasMoreFalse(t *testing.T) {
-	group := gcid.GroupID{ID: "space-1", IsDM: false}
-	gc := newBackfillTestClient("owner", func(context.Context, *pb.ListTopicsRequest) (*pb.ListTopicsResponse, error) {
-		return &pb.ListTopicsResponse{
-			Topics: []*pb.Topic{
-				flatTopic("t2", "m2", "u", "two", 20),
-				flatTopic("t1", "m1", "u", "one", 10),
-			},
-		}, nil
-	})
-
-	resp, err := gc.FetchMessages(context.Background(), bridgev2.FetchMessagesParams{
-		Portal: flatBackfillPortal(group),
-		Count:  5,
-	})
-	if err != nil {
-		t.Fatalf("FetchMessages returned error: %v", err)
-	}
-	if resp.HasMore {
-		t.Error("HasMore = true, want false (single-shot never has more)")
-	}
-	if len(resp.Messages) != 2 {
-		t.Fatalf("len(Messages) = %d, want 2", len(resp.Messages))
-	}
-}
-
 // TestFetchMessagesFlatConvertMessageReusesLiveConversionPath: backfill renders the same HTML as convertMessageToMatrix.
 func TestFetchMessagesFlatConvertMessageReusesLiveConversionPath(t *testing.T) {
 	group := gcid.GroupID{ID: "space-1", IsDM: false}
@@ -1189,34 +1163,6 @@ func TestFetchMessagesForwardNilAnchorSeedsInitialBackfill(t *testing.T) {
 	}
 	if resp.HasMore {
 		t.Error("HasMore = true, want false (single-shot)")
-	}
-}
-
-func TestFetchMessagesForwardWithAnchorReturnsEmptyResponse(t *testing.T) {
-	group := gcid.GroupID{ID: "space-1", IsDM: false}
-	var called bool
-	gc := newBackfillTestClient("owner", func(context.Context, *pb.ListTopicsRequest) (*pb.ListTopicsResponse, error) {
-		called = true
-		return &pb.ListTopicsResponse{}, nil
-	})
-
-	resp, err := gc.FetchMessages(context.Background(), bridgev2.FetchMessagesParams{
-		Portal:  flatBackfillPortal(group),
-		Forward: true,
-		Count:   3,
-		AnchorMessage: &database.Message{
-			ID:        gcid.MakeMessageID("m-last"),
-			Timestamp: gchatmeow.MicrosToTime(1_000_000),
-		},
-	})
-	if err != nil {
-		t.Fatalf("FetchMessages returned error: %v", err)
-	}
-	if called {
-		t.Error("listTopicsFn was called for a forward catch-up (Forward=true, AnchorMessage!=nil) request, want not called (M2's catch_up_user owns reconnect-gap recovery for existing rooms)")
-	}
-	if resp.HasMore || len(resp.Messages) != 0 {
-		t.Errorf("resp = %+v, want empty/HasMore=false", resp)
 	}
 }
 
