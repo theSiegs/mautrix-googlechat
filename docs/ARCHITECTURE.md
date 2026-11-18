@@ -238,9 +238,16 @@ if Google replays it.
 | 401 / `invalid_grant` / signed-out `mole/world` | `BAD_CREDENTIALS`, user re-logs in |
 
 Events carry `user_revision` / `group_revision`, saved in login and portal
-metadata. On reconnect, `catchUp` replays missed events through the normal
-remote-event queue. The watermark only advances after an event is queued
-successfully.
+metadata. `catchUp` (`catch_up_user`) replays missed events through the
+normal remote-event queue on every reconnect, and after the chat-list sync
+on the first connect when a revision is stored (a restart). The watermark
+only advances after an event is queued successfully.
+
+When `catch_up_user` gives up (`ABORTED_*`, the 100-page cap, a cursor that
+does not move), each portal of the login is caught up on its own:
+`catch_up_group` from `PortalMetadata.Revision`, and where that also fails or
+no revision is stored, a `ChatResync` that makes bridgev2 run a forward
+backfill (needs `backfill.enabled`).
 
 The realtime channel is the fragile part: Google may black-hole repeated
 programmatic connects from datacenter IPs. One long-lived channel from a

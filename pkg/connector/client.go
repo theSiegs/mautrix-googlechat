@@ -58,6 +58,10 @@ type GChatClient struct {
 
 	catchUpUserFn func(ctx context.Context, req *pb.CatchUpUserRequest) (*pb.CatchUpResponse, error)
 
+	catchUpGroupFn func(ctx context.Context, req *pb.CatchUpGroupRequest) (*pb.CatchUpResponse, error)
+
+	listPortalsFn func(ctx context.Context) ([]*bridgev2.Portal, error)
+
 	getMembersFn func(ctx context.Context, req *pb.GetMembersRequest) (*pb.GetMembersResponse, error)
 
 	queueChatResyncFn func(evt *simplevent.ChatResync) bridgev2.EventHandlingResult
@@ -335,17 +339,25 @@ func (c *GChatClient) reportBridgeState(bs status.BridgeState) {
 }
 
 // handleConnState reports the state and, on Connected, persists cookies and runs syncChats
-// (first connect per conn) or catchUp (reconnects) in a goroutine.
+// (first connect per conn, then catchUp after a restart) or catchUp (reconnects) in a goroutine.
 func (c *GChatClient) handleConnState(ctx context.Context, state gchatmeow.ConnState, err error) {
 	c.reportState(state, err)
 	if state == gchatmeow.ConnStateConnected {
 		c.persistCookies(ctx)
+		// Snapshot now: live events on the new channel move the watermark past the gap.
+		revision := c.getRevision()
 		if c.shouldSyncOnConnect() {
 			// Set before spawning, so a quick reconnect can't race an unfinished first sync.
 			c.setSyncInProgress(true)
-			go c.syncChats(ctx)
+			go func() {
+				c.syncChats(ctx)
+				// A stored revision means a restart: replay what arrived while the bridge was down.
+				if revision > 0 {
+					c.catchUpFrom(ctx, revision)
+				}
+			}()
 		} else {
-			go c.catchUp(ctx)
+			go c.catchUpFrom(ctx, revision)
 		}
 	}
 }

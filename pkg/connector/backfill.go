@@ -19,9 +19,14 @@ import (
 // catchUpMaxPages bounds catchUp's PAGINATED drain loop against a server that never says COMPLETED.
 const catchUpMaxPages = 100
 
-// catchUp replays events since UserLoginMetadata.Revision via catch_up_user, draining all pages through handleGChatEvent.
-// Pagination uses a local cursor, not the shared watermark: live events may advance that past the un-drained backlog.
+// catchUp replays events since the stored UserLoginMetadata.Revision.
 func (c *GChatClient) catchUp(ctx context.Context) {
+	c.catchUpFrom(ctx, c.getRevision())
+}
+
+// catchUpFrom drains catch_up_user from fromRevision with a local cursor (live events move the shared watermark).
+// When the server gives up (ABORTED_*, page cap, stuck cursor) it falls back to catchUpPortals.
+func (c *GChatClient) catchUpFrom(ctx context.Context, fromRevision int64) {
 	log := zerolog.Ctx(ctx)
 
 	if c.isSyncInProgress() {
@@ -39,7 +44,6 @@ func (c *GChatClient) catchUp(ctx context.Context) {
 		fetch = conn.CatchUpUser
 	}
 
-	fromRevision := c.getRevision()
 	cursor := fromRevision
 	totalEvents := 0
 	for page := 0; page < catchUpMaxPages; page++ {
@@ -57,8 +61,9 @@ func (c *GChatClient) catchUp(ctx context.Context) {
 		}
 		status := resp.GetStatus()
 		if status != pb.CatchUpResponse_COMPLETED && status != pb.CatchUpResponse_PAGINATED {
-			// ABORTED_*: nothing safe to replay.
-			log.Warn().Str("status", status.String()).Int("page", page).Msg("googlechat: catch_up_user did not complete, stopping drain")
+			// ABORTED_*: nothing safe to replay from the user stream.
+			log.Warn().Str("status", status.String()).Int("page", page).Msg("googlechat: catch_up_user did not complete, falling back to per-chat catch-up")
+			c.catchUpPortals(ctx)
 			return
 		}
 
@@ -89,11 +94,13 @@ func (c *GChatClient) catchUp(ctx context.Context) {
 		}
 		// PAGINATED but the cursor did not advance: stop rather than re-request the same page.
 		if cursor <= pageStartCursor {
-			log.Warn().Int("page", page).Int64("cursor", cursor).Msg("googlechat: catch_up_user reported more pages but the revision cursor did not advance, stopping drain")
+			log.Warn().Int("page", page).Int64("cursor", cursor).Msg("googlechat: catch_up_user reported more pages but the revision cursor did not advance, falling back to per-chat catch-up")
+			c.catchUpPortals(ctx)
 			return
 		}
 	}
-	log.Warn().Int("max_pages", catchUpMaxPages).Int("event_count", totalEvents).Int64("to_revision", cursor).Msg("googlechat: catch_up_user still PAGINATED after max pages, stopping drain (next reconnect resumes from the advanced watermark)")
+	log.Warn().Int("max_pages", catchUpMaxPages).Int("event_count", totalEvents).Int64("to_revision", cursor).Msg("googlechat: catch_up_user still PAGINATED after max pages, falling back to per-chat catch-up")
+	c.catchUpPortals(ctx)
 }
 
 // advanceUserRevision persists evt's user_revision as the catch_up_user watermark if newer.

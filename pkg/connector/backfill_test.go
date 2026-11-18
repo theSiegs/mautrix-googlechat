@@ -371,8 +371,8 @@ func TestCatchUpAbortedStatusLeavesWatermarkUnchanged(t *testing.T) {
 
 func TestHandleConnStateFirstConnectSyncsThenReconnectCatchesUp(t *testing.T) {
 	login := newTestUserLogin(&UserLoginMetadata{Revision: 42})
-	calls := make(chan string, 1)
-	var gotReq *pb.CatchUpUserRequest
+	calls := make(chan string, 4)
+	gotReq := make(chan *pb.CatchUpUserRequest, 4)
 	gc := &GChatClient{
 		UserLogin: login,
 		Main:      &GChatConnector{Config: *newTestConfig(t)},
@@ -382,7 +382,7 @@ func TestHandleConnStateFirstConnectSyncsThenReconnectCatchesUp(t *testing.T) {
 			return &pb.PaginatedWorldResponse{}, nil
 		},
 		catchUpUserFn: func(_ context.Context, req *pb.CatchUpUserRequest) (*pb.CatchUpResponse, error) {
-			gotReq = req
+			gotReq <- req
 			calls <- "catchup"
 			return &pb.CatchUpResponse{Status: pb.CatchUpResponse_COMPLETED.Enum()}, nil
 		},
@@ -399,6 +399,16 @@ func TestHandleConnStateFirstConnectSyncsThenReconnectCatchesUp(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for the first Connected's sync")
 	}
+	// A stored revision means a restart, so the first Connected also catches up after its sync.
+	select {
+	case got := <-calls:
+		if got != "catchup" {
+			t.Fatalf("after the first sync got %q, want %q", got, "catchup")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the first Connected's catch-up")
+	}
+	<-gotReq
 	waitUntilSyncNotInProgress(t, gc, 2*time.Second)
 
 	gc.handleConnState(ctx, gchatmeow.ConnStateConnected, nil)
@@ -412,7 +422,7 @@ func TestHandleConnStateFirstConnectSyncsThenReconnectCatchesUp(t *testing.T) {
 		t.Fatal("timed out waiting for the second Connected's catch-up")
 	}
 
-	if got := gotReq.GetRange().GetFromRevisionTimestamp(); got != 42 {
+	if got := (<-gotReq).GetRange().GetFromRevisionTimestamp(); got != 42 {
 		t.Errorf("Range.FromRevisionTimestamp = %d, want 42 (stored UserLoginMetadata.Revision)", got)
 	}
 }
