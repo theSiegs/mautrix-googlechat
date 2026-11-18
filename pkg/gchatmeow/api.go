@@ -78,6 +78,9 @@ type Client struct {
 	sessionCheckRunning bool
 	lastSessionCheck    time.Time
 
+	// readOnly refuses every mutating call before any HTTP.
+	readOnly bool
+
 	// nowFn replaces time.Now in tests; nil in production.
 	nowFn func() time.Time
 
@@ -109,16 +112,7 @@ func newRequestHeader() *pb.RequestHeader {
 	}
 }
 
-// doRequest retries once after refreshing the XSRF token on HTTP 401.
-func (c *Client) doRequest(ctx context.Context, endpoint string, requestPB, responsePB proto.Message) error {
-	return c.doRequestWithPolicy(ctx, endpoint, requestPB, responsePB, true)
-}
-
-// doRequestNonIdempotent is doRequest without 5xx retries, for RPCs that create something.
-func (c *Client) doRequestNonIdempotent(ctx context.Context, endpoint string, requestPB, responsePB proto.Message) error {
-	return c.doRequestWithPolicy(ctx, endpoint, requestPB, responsePB, false)
-}
-
+// doRequestWithPolicy sends one RPC and retries once after refreshing the XSRF token on HTTP 401.
 func (c *Client) doRequestWithPolicy(ctx context.Context, endpoint string, requestPB, responsePB proto.Message, idempotent bool) error {
 	err := c.doRequestOnce(ctx, endpoint, requestPB, responsePB, idempotent)
 	if isForbiddenStatus(err) {
@@ -210,162 +204,159 @@ func unmarshalAPIResponse(body []byte, responsePB proto.Message) error {
 func (c *Client) GetUserPresence(ctx context.Context, req *pb.GetUserPresenceRequest) (*pb.GetUserPresenceResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.GetUserPresenceResponse{}
-	return resp, c.doRequest(ctx, "get_user_presence", req, resp)
+	return resp, c.call(ctx, "get_user_presence", req, resp)
 }
 
 // GetMembers resolves user/member info by id.
 func (c *Client) GetMembers(ctx context.Context, req *pb.GetMembersRequest) (*pb.GetMembersResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.GetMembersResponse{}
-	return resp, c.doRequest(ctx, "get_members", req, resp)
+	return resp, c.call(ctx, "get_members", req, resp)
 }
 
 // PaginatedWorld lists all conversations; used for chat sync.
 func (c *Client) PaginatedWorld(ctx context.Context, req *pb.PaginatedWorldRequest) (*pb.PaginatedWorldResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.PaginatedWorldResponse{}
-	return resp, c.doRequest(ctx, "paginated_world", req, resp)
+	return resp, c.call(ctx, "paginated_world", req, resp)
 }
 
 // GetSelfUserStatus returns the current user's own status.
 func (c *Client) GetSelfUserStatus(ctx context.Context, req *pb.GetSelfUserStatusRequest) (*pb.GetSelfUserStatusResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.GetSelfUserStatusResponse{}
-	return resp, c.doRequest(ctx, "get_self_user_status", req, resp)
+	return resp, c.call(ctx, "get_self_user_status", req, resp)
 }
 
 // GetGroup fetches one group/DM, including membership.
 func (c *Client) GetGroup(ctx context.Context, req *pb.GetGroupRequest) (*pb.GetGroupResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.GetGroupResponse{}
-	return resp, c.doRequest(ctx, "get_group", req, resp)
+	return resp, c.call(ctx, "get_group", req, resp)
 }
 
 // MarkGroupReadstate sends a read receipt.
 func (c *Client) MarkGroupReadstate(ctx context.Context, req *pb.MarkGroupReadstateRequest) (*pb.MarkGroupReadstateResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.MarkGroupReadstateResponse{}
-	return resp, c.doRequest(ctx, "mark_group_readstate", req, resp)
+	return resp, c.call(ctx, "mark_group_readstate", req, resp)
 }
 
 // CreateTopic sends a message that starts a new thread.
 func (c *Client) CreateTopic(ctx context.Context, req *pb.CreateTopicRequest) (*pb.CreateTopicResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.CreateTopicResponse{}
-	// Non-idempotent: retrying after a 5xx could post the message twice.
-	return resp, c.doRequestNonIdempotent(ctx, "create_topic", req, resp)
+	return resp, c.call(ctx, "create_topic", req, resp)
 }
 
 // CreateMessage sends a message into an existing thread.
 func (c *Client) CreateMessage(ctx context.Context, req *pb.CreateMessageRequest) (*pb.CreateMessageResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.CreateMessageResponse{}
-	// Non-idempotent: retrying after a 5xx could post the message twice.
-	return resp, c.doRequestNonIdempotent(ctx, "create_message", req, resp)
+	return resp, c.call(ctx, "create_message", req, resp)
 }
 
 // UpdateReaction adds or removes an emoji reaction.
 func (c *Client) UpdateReaction(ctx context.Context, req *pb.UpdateReactionRequest) (*pb.UpdateReactionResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.UpdateReactionResponse{}
-	return resp, c.doRequest(ctx, "update_reaction", req, resp)
+	return resp, c.call(ctx, "update_reaction", req, resp)
 }
 
 // DeleteMessage deletes a message.
 func (c *Client) DeleteMessage(ctx context.Context, req *pb.DeleteMessageRequest) (*pb.DeleteMessageResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.DeleteMessageResponse{}
-	return resp, c.doRequest(ctx, "delete_message", req, resp)
+	return resp, c.call(ctx, "delete_message", req, resp)
 }
 
 // EditMessage edits message text.
 func (c *Client) EditMessage(ctx context.Context, req *pb.EditMessageRequest) (*pb.EditMessageResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.EditMessageResponse{}
-	return resp, c.doRequest(ctx, "edit_message", req, resp)
+	return resp, c.call(ctx, "edit_message", req, resp)
 }
 
 // SetTypingState sends a typing notification.
 func (c *Client) SetTypingState(ctx context.Context, req *pb.SetTypingStateRequest) (*pb.SetTypingStateResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.SetTypingStateResponse{}
-	return resp, c.doRequest(ctx, "set_typing_state", req, resp)
+	return resp, c.call(ctx, "set_typing_state", req, resp)
 }
 
 // CatchUpUser replays missed events since a revision. Both catch-up endpoints return CatchUpResponse.
 func (c *Client) CatchUpUser(ctx context.Context, req *pb.CatchUpUserRequest) (*pb.CatchUpResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.CatchUpResponse{}
-	return resp, c.doRequest(ctx, "catch_up_user", req, resp)
+	return resp, c.call(ctx, "catch_up_user", req, resp)
 }
 
 // CatchUpGroup replays missed events for one group since a revision.
 func (c *Client) CatchUpGroup(ctx context.Context, req *pb.CatchUpGroupRequest) (*pb.CatchUpResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.CatchUpResponse{}
-	return resp, c.doRequest(ctx, "catch_up_group", req, resp)
+	return resp, c.call(ctx, "catch_up_group", req, resp)
 }
 
 // ListTopics pages through topics of a group.
 func (c *Client) ListTopics(ctx context.Context, req *pb.ListTopicsRequest) (*pb.ListTopicsResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.ListTopicsResponse{}
-	return resp, c.doRequest(ctx, "list_topics", req, resp)
+	return resp, c.call(ctx, "list_topics", req, resp)
 }
 
 // ListMessages pages through messages of a topic.
 func (c *Client) ListMessages(ctx context.Context, req *pb.ListMessagesRequest) (*pb.ListMessagesResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.ListMessagesResponse{}
-	return resp, c.doRequest(ctx, "list_messages", req, resp)
+	return resp, c.call(ctx, "list_messages", req, resp)
 }
 
 // CreateMembership adds members to a space. Spaces only.
 func (c *Client) CreateMembership(ctx context.Context, req *pb.CreateMembershipRequest) (*pb.CreateMembershipResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.CreateMembershipResponse{}
-	return resp, c.doRequest(ctx, "create_membership", req, resp)
+	return resp, c.call(ctx, "create_membership", req, resp)
 }
 
 // RemoveMemberships removes members from a space; removing yourself is a leave. Spaces only.
 func (c *Client) RemoveMemberships(ctx context.Context, req *pb.RemoveMembershipsRequest) (*pb.RemoveMembershipsResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.RemoveMembershipsResponse{}
-	return resp, c.doRequest(ctx, "remove_memberships", req, resp)
+	return resp, c.call(ctx, "remove_memberships", req, resp)
 }
 
 // CreateDm creates or returns the existing DM; Invitees takes an email when the gaia id is unknown.
 func (c *Client) CreateDm(ctx context.Context, req *pb.CreateDmRequest) (*pb.CreateDmResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.CreateDmResponse{}
-	// Non-idempotent: a retried 5xx could create a second conversation.
-	return resp, c.doRequestNonIdempotent(ctx, "create_dm", req, resp)
+	return resp, c.call(ctx, "create_dm", req, resp)
 }
 
 // CreateGroup creates a space. Not live-verified: real accounts get a bare HTTP 400.
 func (c *Client) CreateGroup(ctx context.Context, req *pb.CreateGroupRequest) (*pb.CreateGroupResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.CreateGroupResponse{}
-	return resp, c.doRequestNonIdempotent(ctx, "create_group", req, resp)
+	return resp, c.call(ctx, "create_group", req, resp)
 }
 
 // UpdateGroupNotificationSettings mutes or unmutes one conversation.
 func (c *Client) UpdateGroupNotificationSettings(ctx context.Context, req *pb.UpdateGroupNotificationSettingsRequest) (*pb.UpdateGroupNotificationSettingsResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.UpdateGroupNotificationSettingsResponse{}
-	return resp, c.doRequest(ctx, "update_group_notification_settings", req, resp)
+	return resp, c.call(ctx, "update_group_notification_settings", req, resp)
 }
 
 // HideGroup hides or unhides a conversation in the user's chat list (the only way to put a DM away).
 func (c *Client) HideGroup(ctx context.Context, req *pb.HideGroupRequest) (*pb.HideGroupResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.HideGroupResponse{}
-	return resp, c.doRequest(ctx, "hide_group", req, resp)
+	return resp, c.call(ctx, "hide_group", req, resp)
 }
 
 // UpdateGroup updates a space's metadata (used to rename). Spaces only.
 func (c *Client) UpdateGroup(ctx context.Context, req *pb.UpdateGroupRequest) (*pb.UpdateGroupResponse, error) {
 	req.RequestHeader = newRequestHeader()
 	resp := &pb.UpdateGroupResponse{}
-	return resp, c.doRequest(ctx, "update_group", req, resp)
+	return resp, c.call(ctx, "update_group", req, resp)
 }

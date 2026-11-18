@@ -70,6 +70,8 @@ type ClientOpts struct {
 	UserAgent string
 	// BaseURLs redirects the client to a fake server in tests; leave zero in production.
 	BaseURLs BaseURLs
+	// ReadOnly refuses every call that would change the account (sends, receipts, typing, uploads).
+	ReadOnly bool
 	// Now and Sleep replace the clock in tests; nil means real time.
 	Now   func() time.Time
 	Sleep func(ctx context.Context, d time.Duration) error
@@ -100,6 +102,7 @@ func NewClient(opts ClientOpts) (*Client, error) {
 		sidFatalRetryFloor:  defaultSIDFatalRetryFloor,
 		sidFatalRetryCap:    defaultSIDFatalRetryCap,
 		xsrfRefreshInterval: defaultXSRFRefreshInterval,
+		readOnly:            opts.ReadOnly,
 		nowFn:               opts.Now,
 		sleepFn:             opts.Sleep,
 	}
@@ -272,6 +275,9 @@ func (c *Client) Disconnect() {
 
 // SendStreamEvent sends a StreamEventsRequest (typing/active pings) on the live channel.
 func (c *Client) SendStreamEvent(ctx context.Context, req *pb.StreamEventsRequest) error {
+	if c.readOnly {
+		return fmt.Errorf("stream event: %w", ErrReadOnly)
+	}
 	ch := c.getChannel()
 	if ch == nil {
 		return errors.New("gchatmeow: not connected")

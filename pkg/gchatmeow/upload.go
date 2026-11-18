@@ -34,6 +34,9 @@ func stripWhitespace(data []byte) []byte {
 // UploadFile performs a single-shot resumable upload and returns the UploadMetadata for an
 // UPLOAD_METADATA annotation. It must not send "alt" or "key" query params.
 func (c *Client) UploadFile(ctx context.Context, groupID string, data []byte, filename, mimeType string) (*pb.UploadMetadata, error) {
+	if c.readOnly {
+		return nil, fmt.Errorf("upload: %w", ErrReadOnly)
+	}
 	xsrfToken := c.XSRFToken()
 
 	startHeaders := http.Header{}
