@@ -71,6 +71,8 @@ type ClientOpts struct {
 	UserAgent string
 	// BaseURLs redirects the client to a fake server in tests; leave zero in production.
 	BaseURLs BaseURLs
+	// Observer receives health signals; nil means none.
+	Observer Observer
 	// Presence selects the channel ping; empty means PresenceActive.
 	Presence Presence
 	// Protocol overrides the rotatable web-client constants; zero fields mean the defaults.
@@ -109,6 +111,7 @@ func NewClient(opts ClientOpts) (*Client, error) {
 		sidFatalRetryCap:    defaultSIDFatalRetryCap,
 		xsrfRefreshInterval: defaultXSRFRefreshInterval,
 		readOnly:            opts.ReadOnly,
+		observer:            opts.Observer,
 		protocol:            opts.Protocol.withDefaults(),
 		presence:            opts.Presence,
 		nowFn:               opts.Now,
@@ -309,8 +312,13 @@ func (c *Client) SendStreamEvent(ctx context.Context, req *pb.StreamEventsReques
 // Events during a reconnect gap are not replayed; the connector must catch up.
 func (c *Client) wireChannel(ch channelListener) {
 	ch.SetOnReceiveArray(c.onReceiveArray)
-	ch.SetOnConnect(func(ctx context.Context) { c.sawConnected.Store(true); c.emitState(ConnStateConnected, nil) })
-	ch.SetOnReconnect(func(ctx context.Context) { c.sawConnected.Store(true); c.emitState(ConnStateConnected, nil) })
+	connected := func(ctx context.Context) {
+		c.sawConnected.Store(true)
+		c.obs().ChannelConnected()
+		c.emitState(ConnStateConnected, nil)
+	}
+	ch.SetOnConnect(connected)
+	ch.SetOnReconnect(connected)
 	ch.SetOnDisconnect(func(ctx context.Context) { c.emitState(ConnStateTransient, nil) })
 }
 
@@ -321,6 +329,7 @@ func (c *Client) onReceiveArray(ctx context.Context, arr []byte) error {
 	if err := json.Unmarshal(arr, &dataArray); err != nil {
 		// Log and skip; never kill the channel.
 		log.Debug().Err(err).Msg("gchatmeow: skipping non-array webchannel frame")
+		c.obs().DecodeSkip("frame")
 		return nil
 	}
 	if len(dataArray) == 0 {
@@ -335,10 +344,12 @@ func (c *Client) onReceiveArray(ctx context.Context, arr []byte) error {
 	resp := &pb.StreamEventsResponse{}
 	if err := pblite.Unmarshal(dataArray[0], resp); err != nil {
 		log.Debug().Err(err).Msg("gchatmeow: skipping undecodable stream event")
+		c.obs().DecodeSkip("stream_event")
 		return nil
 	}
 
 	for _, ev := range splitEventBodies(resp.GetEvent()) {
+		c.obs().StreamEvent()
 		if c.OnStreamEvent != nil {
 			c.OnStreamEvent(ctx, ev)
 		}
@@ -397,6 +408,7 @@ func (c *Client) refreshXSRFToken(ctx context.Context) error {
 	}
 
 	token, err := c.session.FetchXSRFToken(ctx)
+	c.noteMoleWorld(err)
 	if err != nil {
 		return err
 	}

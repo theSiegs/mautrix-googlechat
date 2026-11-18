@@ -50,6 +50,7 @@ func (c *Client) forceTokenRefresh(ctx context.Context) error {
 	c.refreshMu.Lock()
 	defer c.refreshMu.Unlock()
 	token, err := c.session.FetchXSRFToken(ctx)
+	c.noteMoleWorld(err)
 	if err != nil {
 		return err
 	}

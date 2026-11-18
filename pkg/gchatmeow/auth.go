@@ -55,17 +55,17 @@ func (s *Session) FetchXSRFToken(ctx context.Context) (string, error) {
 
 	match := wizGlobalDataPattern.FindSubmatch(resp.Body)
 	if match == nil {
-		return "", fmt.Errorf("gchatmeow: didn't find WIZ_global_data in /mole/world response")
+		return "", fmt.Errorf("%w: no WIZ_global_data", ErrMoleWorldUnparseable)
 	}
 
 	var wizData map[string]any
 	if err := json.Unmarshal(match[1], &wizData); err != nil {
-		return "", fmt.Errorf("gchatmeow: non-JSON WIZ_global_data in /mole/world response: %w", err)
+		return "", fmt.Errorf("%w: non-JSON WIZ_global_data: %v", ErrMoleWorldUnparseable, err)
 	}
 
 	qwAQke, ok := wizData["qwAQke"]
 	if !ok {
-		return "", fmt.Errorf("gchatmeow: WIZ_global_data missing %q key in /mole/world response", "qwAQke")
+		return "", fmt.Errorf("%w: WIZ_global_data missing %q key", ErrMoleWorldUnparseable, "qwAQke")
 	}
 	if qwAQke == accountsSignInUi {
 		return "", ErrNotLoggedIn
@@ -74,11 +74,11 @@ func (s *Session) FetchXSRFToken(ctx context.Context) (string, error) {
 	// "SMqcke" holds the xsrf token.
 	smQcke, ok := wizData["SMqcke"]
 	if !ok {
-		return "", fmt.Errorf("gchatmeow: WIZ_global_data missing %q key in /mole/world response", "SMqcke")
+		return "", fmt.Errorf("%w: WIZ_global_data missing %q key", ErrMoleWorldUnparseable, "SMqcke")
 	}
 	token, ok := smQcke.(string)
 	if !ok {
-		return "", fmt.Errorf("gchatmeow: WIZ_global_data %q is not a string in /mole/world response", "SMqcke")
+		return "", fmt.Errorf("%w: WIZ_global_data %q is not a string", ErrMoleWorldUnparseable, "SMqcke")
 	}
 
 	return token, nil

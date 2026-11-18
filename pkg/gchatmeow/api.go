@@ -78,6 +78,10 @@ type Client struct {
 	sessionCheckRunning bool
 	lastSessionCheck    time.Time
 
+	// observer (guarded by mu) receives health signals; moleWorldUnparseable is the current streak.
+	observer             Observer
+	moleWorldUnparseable int
+
 	// protocol holds the rotatable web-client constants; zero fields mean the defaults.
 	protocol Protocol
 
@@ -187,6 +191,7 @@ func (c *Client) doRequestOnce(ctx context.Context, endpoint string, requestPB, 
 		fetch = c.session.FetchNonIdempotent
 	}
 	res, err := fetch(ctx, http.MethodPost, reqURL, headers, reqBody)
+	c.obs().Request(endpoint, statusOf(err))
 	if err != nil {
 		return err
 	}
