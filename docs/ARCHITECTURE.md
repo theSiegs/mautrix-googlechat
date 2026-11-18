@@ -306,6 +306,23 @@ The realtime channel is the fragile part: Google may black-hole repeated
 programmatic connects from datacenter IPs. One long-lived channel from a
 normal IP works.
 
+### 4.1 Drift alarms
+
+`gchatmeow.Observer` (set with `ClientOpts.Observer` or `SetObserver`)
+reports each RPC by endpoint and status, each `/mole/world` result with the
+streak of unparseable answers, skipped stream frames, channel connects and
+dispatched events. Per-field pblite skips are still only logged. The
+connector (`loginObserver` in `driftalarm.go`) keeps the last connect and
+event times and raises two warnings, which decorate the bridge state
+instead of replacing it:
+
+| Warning | Raised when | State |
+|---|---|---|
+| `gchat-empty-chat-list` | `paginated_world` returns no chats while the login has portals (what a changed request shape looks like) | `CONNECTED` with the warning code |
+| `gchat-session-unverifiable` | `/mole/world` is a 200 without usable `WIZ_global_data` 5 times in a row (a challenge page, a new layout) | `CONNECTED` or `TRANSIENT_DISCONNECT` with the warning code and a relogin hint |
+
+Both clear on the next good answer.
+
 ## 5. Features → code
 
 | Feature | Where |

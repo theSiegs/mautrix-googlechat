@@ -74,6 +74,8 @@ func (c *GChatClient) syncChats(ctx context.Context) {
 		return
 	}
 
+	c.checkEmptyChatList(ctx, len(resp.GetWorldItems()))
+
 	// Set RemoteName first: the personal filtering space is named "Google Chat (<RemoteName>)".
 	c.updateOwnLoginProfile(ctx)
 
@@ -168,4 +170,23 @@ func syncSleepOrDone(ctx context.Context, d time.Duration) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// checkEmptyChatList raises a warning when the chat list is empty although this login has bridged chats:
+// that is what a change in the paginated_world request shape looks like, and it must not pass as success.
+func (c *GChatClient) checkEmptyChatList(ctx context.Context, items int) {
+	empty := false
+	if items == 0 {
+		portals, err := c.loginPortals(ctx)
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("googlechat: failed to count portals for the empty chat list check")
+			return
+		}
+		empty = len(portals) > 0
+		if empty {
+			zerolog.Ctx(ctx).Warn().Int("portals", len(portals)).
+				Msg("googlechat: paginated_world returned no chats although this login has bridged chats; the request shape may have changed")
+		}
+	}
+	c.setWarning(func(w *driftWarnings) { w.emptyChatList = empty })
 }

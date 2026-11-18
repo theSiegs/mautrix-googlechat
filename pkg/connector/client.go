@@ -34,6 +34,13 @@ type GChatClient struct {
 	lastState status.BridgeStateEvent
 	// lastError distinguishes failures that both map to StateBadCredentials.
 	lastError status.BridgeStateErrorCode
+	// warnings, lastConnState and connStateReported (guarded by mu) drive the drift warnings in driftalarm.go.
+	warnings          driftWarnings
+	lastConnState     gchatmeow.ConnState
+	connStateReported bool
+
+	activityTimes
+
 	// initialSyncDone latches once the first Connected for the current conn ran syncChats.
 	initialSyncDone bool
 	// syncInProgress is set before the syncChats goroutine starts; catchUp skips while it is true.
@@ -188,6 +195,7 @@ func (c *GChatClient) installConn(ctx context.Context, conn *gchatmeow.Client) {
 	}
 	conn.OnConnectionState = c.connStateCallback(ctx, conn)
 	conn.SetOnCookiesChanged(func() { c.scheduleCookieSave(ctx, conn) })
+	conn.SetObserver(loginObserver{c})
 	c.replaceConn(conn)
 }
 
@@ -326,7 +334,11 @@ func (c *GChatClient) ownEmail() string {
 
 // reportState maps state/err to a BridgeState, sends it and caches it for IsLoggedIn.
 func (c *GChatClient) reportState(state gchatmeow.ConnState, err error) {
-	c.reportBridgeState(connStateToBridgeState(state, err))
+	c.mu.Lock()
+	c.lastConnState, c.connStateReported = state, true
+	warnings := c.warnings
+	c.mu.Unlock()
+	c.reportBridgeState(warnings.decorate(connStateToBridgeState(state, err)))
 }
 
 // reportBridgeState sends bs and caches what was sent.
