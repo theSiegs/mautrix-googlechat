@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses calendar versioning (`YY.MM`), matching the other
 mautrix bridges.
 
+## [Unreleased]
+
+### Added
+
+- `network.read_only`: a receive-only mode. Nothing that changes the Google
+  account is sent (no messages, edits, reactions, uploads, membership or room
+  changes, read receipts or typing); the client refuses such calls before
+  any request is made.
+- Login accepts the rest of the Google session cookies next to the required
+  five (`__Secure-1PSIDTS`, `__Secure-3PSIDTS`, `__Secure-1PSIDCC`,
+  `__Secure-3PSIDCC`, `SIDCC`, `APISID`, `SAPISID`, `__Secure-1PSID`,
+  `__Secure-3PSID`, `__Secure-1PAPISID`, `__Secure-3PAPISID`). Accounts that
+  were sent to the sign-in page with five cookies need them.
+- `network.presence` (`active` or `inactive`), `network.user_agent` and
+  `network.protocol.*` (API key, client version, `/mole/world` build string).
+- Bridge-state warnings when the chat list comes back empty although chats
+  are bridged, and when the session check keeps returning an unreadable page.
+- `pkg/gchatmeow/gchattest`: a fake Google Chat server and clock for offline
+  tests, with `ClientOpts.BaseURLs` to point the client at it.
+
+### Changed
+
+- The User-Agent captured at login is sent unchanged; the browser version in
+  it is no longer rewritten.
+- Reconnect backoffs, the channel recycle and the XSRF refresh are spread by
+  20% either way.
+
+### Fixed
+
+- Messages that arrived while the bridge was stopped are fetched on the next
+  start: catch-up now also runs on the first connect, falls back to a
+  per-chat catch-up when Google aborts it, and a forward backfill fills the
+  gap from the newest history page.
+- Cookie names keep their case, so `__Secure-*` cookies survive a restart.
+- Rotated cookies are saved within about 30 seconds and on shutdown, not
+  only on reconnect.
+- A cookie Google deletes is removed instead of being kept empty, and the
+  webchannel `COMPASS` no longer overwrites the login one.
+- A dead session is reported as `BAD_CREDENTIALS` within minutes instead of
+  up to two days: a 403, repeated channel failures or a rejected request
+  trigger a session check.
+- The reconnect backoff starts over after a successful connect.
+- Backfill returns every reply of a topic and reports whether older history
+  exists.
+
 ## [26.09.2] - 2026-09-30
 
 ### Added

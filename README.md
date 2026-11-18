@@ -88,9 +88,17 @@ bridgev2 config. The ones worth knowing:
   link chip (GIF, preview) points at.
 - `network.skip_leave_confirmation`: make `leave` act without asking for
   `leave confirm`.
+- `network.read_only`: receive only. Nothing that changes the Google account
+  is sent, including read receipts and typing; for archive-style setups.
+- `network.presence`: `active` (default) or `inactive`, what the bridge tells
+  Google about itself. `inactive` declares an idle background tab; its effect
+  on phone notifications is not yet verified against a live account.
+- `network.user_agent`, `network.protocol.*`: overrides for the User-Agent
+  and for web-client constants Google may rotate; normally left empty.
 - `backfill.enabled` plus `backfill.max_initial_messages` /
   `backfill.threads.max_initial_messages` above zero: enables history
-  backfill.
+  backfill, and lets the bridge fetch messages that arrived while it was
+  stopped (`backfill.max_catchup_messages`).
 - `bridge.bridge_matrix_leave` (default off): while off, leaving a room on
   Matrix does not leave the Google Chat space, and the room comes back on the
   next sync. Use the `leave` command instead; it leaves with all your logins.

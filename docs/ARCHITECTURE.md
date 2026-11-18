@@ -218,7 +218,8 @@ so flat chats (one message per topic) keep their request shape.
 - Backward: messages older than the oldest bridged one. `HasMore` is
   `!contains_first_topic`, but only while a call still adds messages.
 - Forward with an anchor: messages newer than the newest bridged one. This
-  is the gap fill bridgev2 runs on a `ChatResync`, so messages that arrived
+  is the gap fill bridgev2 runs on a `ChatResync` (one request per stale
+  chat, spaced 500 ms apart per login), so messages that arrived
   while the bridge was down are recovered even when catch-up cannot.
 
 Known gap: there is no way to ask for an older page. The request has no
