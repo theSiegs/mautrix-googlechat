@@ -3,7 +3,7 @@ package connector
 // Metadata stored as JSON in bridgev2's DB; JSON field names are persisted, do not rename.
 
 type UserLoginMetadata struct {
-	// The five auth cookies (COMPASS, SSID, SID, OSID, HSID), refreshed after every connect.
+	// The auth cookies (the required five plus any optional or rotated ones), saved whenever they change.
 	Cookies   map[string]string `json:"cookies"`
 	UserAgent string            `json:"user_agent,omitempty"`
 	// Last fully-handled user event stream revision (catch_up_user watermark).

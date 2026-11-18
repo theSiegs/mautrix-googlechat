@@ -37,14 +37,22 @@ callbacks. `*connector.GChatClient` owns the supervision loop, turns
 
 ### 2.1 Cookies and XSRF
 
-Login is pure cookie auth: `COMPASS`, `SSID`, `SID`, `OSID`, `HSID` (plus
-the browser User-Agent) in `UserLoginMetadata`.
+Login is pure cookie auth: `COMPASS`, `SSID`, `SID`, `OSID`, `HSID`, the
+optional rest of the session family (`__Secure-1PSIDTS` and friends) and
+the browser User-Agent, all in `UserLoginMetadata`.
 
 - Cookie values are sent raw. Google rejects quoted values, hence the custom
   `cookieJar` (`cookies.go`).
-- Google rotates cookies during a session (`SIDCC`, a webchannel `COMPASS`).
-  `persistCookies` saves them after every connect; skipping this kills
-  sessions early.
+- Only the five legacy names are upper-cased; every other name keeps its
+  case (`__Secure-1PSIDTS`).
+- Google rotates cookies during a session (`SIDCC`, `__Secure-*PSIDTS`). The
+  jar reports each change and the connector saves it after a 30 s debounce,
+  on every connect and on disconnect; skipping this kills sessions early.
+- A `Set-Cookie` with `Max-Age<=0` or a 1970 `Expires` removes the cookie.
+- The jar is flat by name, with one exception: cookies set for the
+  webchannel path (the register `COMPASS`) are kept apart, sent only on
+  webchannel requests and never persisted, so they cannot replace the login
+  `COMPASS`.
 
 Before any RPC, `GET /u/0/mole/world` returns HTML with
 `window.WIZ_global_data`. `SMqcke` is the XSRF token, sent as
@@ -278,7 +286,7 @@ Changing these breaks stored data or the protocol.
     `att_9`; known and left as is.
 - The proto stays proto2 (§2.4).
 - Every message stores `message_id`, `topic_id` and the µs timestamp.
-- Rotated cookies are saved after every connect (§2.1).
+- Rotated cookies are saved when they change, on connect and on disconnect (§2.1).
 
 ## 7. Known quirks
 

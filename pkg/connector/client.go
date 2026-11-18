@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -48,6 +49,10 @@ type GChatClient struct {
 	disconnectFn func(*gchatmeow.Client)
 
 	saveFn func(ctx context.Context) error
+
+	// cookieSaveTimer (guarded by mu) is the pending debounced cookie save; cookieSaveDebounce zero means the default.
+	cookieSaveTimer    *time.Timer
+	cookieSaveDebounce time.Duration
 
 	paginatedWorldFn func(ctx context.Context, req *pb.PaginatedWorldRequest) (*pb.PaginatedWorldResponse, error)
 
@@ -168,6 +173,12 @@ func hasRequiredCookies(cookies map[string]string) bool {
 // wireAndStart installs conn (tearing down the old one) and starts it in the background.
 // ctx is kept for the connection's lifetime, so it must be long-lived.
 func (c *GChatClient) wireAndStart(ctx context.Context, conn *gchatmeow.Client) {
+	c.installConn(ctx, conn)
+	go conn.Connect(ctx)
+}
+
+// installConn wires conn's callbacks and makes it the live connection without starting it.
+func (c *GChatClient) installConn(ctx context.Context, conn *gchatmeow.Client) {
 	c.mu.Lock()
 	c.initialSyncDone = false
 	c.mu.Unlock()
@@ -175,8 +186,8 @@ func (c *GChatClient) wireAndStart(ctx context.Context, conn *gchatmeow.Client) 
 		c.handleGChatEvent(ctx, ev)
 	}
 	conn.OnConnectionState = c.connStateCallback(ctx, conn)
+	conn.SetOnCookiesChanged(func() { c.scheduleCookieSave(ctx, conn) })
 	c.replaceConn(conn)
-	go conn.Connect(ctx)
 }
 
 // connStateCallback ignores transitions from a superseded conn: Disconnect does not wait
@@ -339,18 +350,30 @@ func (c *GChatClient) handleConnState(ctx context.Context, state gchatmeow.ConnS
 	}
 }
 
+// defaultCookieSaveDebounce bounds how long a rotated cookie can sit unsaved.
+const defaultCookieSaveDebounce = 30 * time.Second
+
 // persistCookies saves conn's current cookies, unless LogoutRemote already ran.
 func (c *GChatClient) persistCookies(ctx context.Context) {
+	c.saveCookies(ctx, false)
+}
+
+// saveCookies writes the jar to the login metadata; onlyIfChanged skips the write when nothing differs.
+func (c *GChatClient) saveCookies(ctx context.Context, onlyIfChanged bool) {
 	conn := c.getConn()
-	if conn == nil {
+	if conn == nil || c.UserLogin == nil {
 		return
 	}
 	err := c.updateMetadata(ctx, func(meta *UserLoginMetadata) bool {
 		if c.loggedOut {
 			return false
 		}
-		meta.Cookies = conn.Cookies()
-		meta.UserAgent = conn.UserAgent()
+		cookies, userAgent := conn.Cookies(), conn.UserAgent()
+		if onlyIfChanged && meta.UserAgent == userAgent && maps.Equal(meta.Cookies, cookies) {
+			return false
+		}
+		meta.Cookies = cookies
+		meta.UserAgent = userAgent
 		return true
 	})
 	if err != nil {
@@ -358,14 +381,53 @@ func (c *GChatClient) persistCookies(ctx context.Context) {
 	}
 }
 
-// Disconnect stops the active client, if any. Safe to call multiple times.
+// scheduleCookieSave arms one debounced save after a cookie change on the live conn.
+func (c *GChatClient) scheduleCookieSave(ctx context.Context, conn *gchatmeow.Client) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn != conn || c.cookieSaveTimer != nil {
+		return
+	}
+	delay := c.cookieSaveDebounce
+	if delay <= 0 {
+		delay = defaultCookieSaveDebounce
+	}
+	c.cookieSaveTimer = time.AfterFunc(delay, func() {
+		c.mu.Lock()
+		c.cookieSaveTimer = nil
+		c.mu.Unlock()
+		c.saveCookies(ctx, true)
+	})
+}
+
+// cancelCookieSave drops a pending debounced save.
+func (c *GChatClient) cancelCookieSave() {
+	c.mu.Lock()
+	if c.cookieSaveTimer != nil {
+		c.cookieSaveTimer.Stop()
+		c.cookieSaveTimer = nil
+	}
+	c.mu.Unlock()
+}
+
+// Disconnect saves any unsaved cookies and stops the active client, if any. Safe to call multiple times.
 func (c *GChatClient) Disconnect() {
+	c.cancelCookieSave()
 	c.mu.Lock()
 	conn := c.conn
 	c.mu.Unlock()
 	if conn != nil {
+		c.saveCookies(c.backgroundCtx(), true)
 		c.disconnect(conn)
 	}
+}
+
+// backgroundCtx is a context for work with no caller context, carrying the login's logger when there is one.
+func (c *GChatClient) backgroundCtx() context.Context {
+	if c.UserLogin == nil {
+		return context.Background()
+	}
+	return c.UserLogin.Log.WithContext(context.Background())
 }
 
 // IsLoggedIn reports whether the last connection state was CONNECTED (cached, no I/O).
@@ -375,9 +437,12 @@ func (c *GChatClient) IsLoggedIn() bool {
 
 // LogoutRemote disconnects and clears the stored cookies; there is no remote revoke endpoint.
 func (c *GChatClient) LogoutRemote(ctx context.Context) {
+	// Latch first, so the save-on-disconnect cannot write the cookies back.
+	c.metaMu.Lock()
+	c.loggedOut = true
+	c.metaMu.Unlock()
 	c.Disconnect()
 	err := c.updateMetadata(ctx, func(meta *UserLoginMetadata) bool {
-		c.loggedOut = true
 		meta.Cookies = nil
 		return true
 	})
