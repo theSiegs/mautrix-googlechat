@@ -469,3 +469,8 @@ func (c *Client) buildChannel() *Channel {
 	}
 	return ch
 }
+
+// SetOnCookiesChanged installs fn, called from request goroutines when a persisted cookie changes; keep it cheap.
+func (c *Client) SetOnCookiesChanged(fn func()) {
+	c.session.SetOnCookiesChanged(fn)
+}

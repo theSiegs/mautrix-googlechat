@@ -73,11 +73,11 @@ type Session struct {
 	moleWorldBaseURL string
 }
 
-// NewSession builds a Session from cookies (keys upper-cased) and a User-Agent (empty means default).
+// NewSession builds a Session from cookies (legacy names upper-cased, others kept) and a User-Agent (empty means default).
 func NewSession(cookies map[string]string, userAgent string) (*Session, error) {
 	jar := newCookieJar()
 	for name, value := range cookies {
-		jar.set(strings.ToUpper(name), value)
+		jar.set(canonicalCookieName(name), value)
 	}
 
 	transport := &http.Transport{
@@ -165,7 +165,7 @@ func (s *Session) buildRequest(ctx context.Context, method, rawURL string, heade
 	req.Header.Set("Connection", "Keep-Alive")
 
 	if s.hostAllowed(req.URL) {
-		if cookieHeader := s.jar.header(); cookieHeader != "" {
+		if cookieHeader := s.jar.header(req.URL.Path); cookieHeader != "" {
 			req.Header.Set("Cookie", cookieHeader)
 		}
 	}
@@ -178,7 +178,7 @@ func (s *Session) absorbCookies(resp *http.Response) {
 	if resp.Request == nil || !s.hostAllowed(resp.Request.URL) {
 		return
 	}
-	s.jar.absorb(resp)
+	s.jar.absorb(resp, resp.Request.URL.Path)
 }
 
 // Fetch performs an idempotent request, retrying transport errors, 429 and 5xx; only 200 is success.
@@ -357,4 +357,9 @@ func truncateBody(body []byte) string {
 		body = body[:maxErrorBodyBytes]
 	}
 	return string(body)
+}
+
+// SetOnCookiesChanged installs fn, called whenever a response adds, rotates or deletes a persisted cookie.
+func (s *Session) SetOnCookiesChanged(fn func()) {
+	s.jar.setOnChange(fn)
 }
