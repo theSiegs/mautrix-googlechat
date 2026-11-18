@@ -65,6 +65,7 @@ func (c *GChatClient) catchUpFrom(ctx context.Context, fromRevision int64) {
 			// ABORTED_*: nothing safe to replay from the user stream.
 			log.Warn().Str("status", status.String()).Int("page", page).Msg("googlechat: catch_up_user did not complete, falling back to per-chat catch-up")
 			c.catchUpPortals(ctx)
+			c.endCatchUp(ctx)
 			return
 		}
 
@@ -91,17 +92,20 @@ func (c *GChatClient) catchUpFrom(ctx context.Context, fromRevision int64) {
 				Int64("from_revision", fromRevision).
 				Int64("to_revision", cursor).
 				Msg("googlechat: catch_up_user drain complete")
+			c.endCatchUp(ctx)
 			return
 		}
 		// PAGINATED but the cursor did not advance: stop rather than re-request the same page.
 		if cursor <= pageStartCursor {
 			log.Warn().Int("page", page).Int64("cursor", cursor).Msg("googlechat: catch_up_user reported more pages but the revision cursor did not advance, falling back to per-chat catch-up")
 			c.catchUpPortals(ctx)
+			c.endCatchUp(ctx)
 			return
 		}
 	}
 	log.Warn().Int("max_pages", catchUpMaxPages).Int("event_count", totalEvents).Int64("to_revision", cursor).Msg("googlechat: catch_up_user still PAGINATED after max pages, falling back to per-chat catch-up")
 	c.catchUpPortals(ctx)
+	c.endCatchUp(ctx)
 }
 
 // advanceUserRevision persists evt's user_revision as the catch_up_user watermark if newer.
@@ -205,7 +209,7 @@ func (c *GChatClient) FetchMessages(ctx context.Context, params bridgev2.FetchMe
 }
 
 // fetchTopicMessages fetches the newest list_topics page and emits every reply on the wanted side of the anchor:
-// newer for a forward gap fill, older for backward history. Thread topics get ShouldBackfillThread on their head.
+// newer for a forward gap fill, older for backward history. Outside a gap fill a thread sends only its head, flagged ShouldBackfillThread.
 func (c *GChatClient) fetchTopicMessages(ctx context.Context, params bridgev2.FetchMessagesParams) (*bridgev2.FetchMessagesResponse, error) {
 	group, err := gcid.ParsePortalID(params.Portal.ID)
 	if err != nil {
@@ -283,6 +287,11 @@ func (c *GChatClient) fetchTopicMessages(ctx context.Context, params bridgev2.Fe
 	build := c.backfillMessageBuilder(ctx, params.Portal)
 	log := zerolog.Ctx(ctx)
 	messages := make([]*bridgev2.BackfillMessage, 0, len(topics))
+	// A batch of only same-microsecond siblings of the anchor is cut by bridgev2 and must not claim progress.
+	olderThanAnchor := !hasAnchor
+	if forwardGap && len(topics) > 0 && topics[0].GetSortTime() > anchorMicros && !resp.GetContainsFirstTopic() {
+		log.Warn().Int("topics", len(topics)).Msg("googlechat: the gap since the last bridged message is larger than one history page; older missed messages are not recovered")
+	}
 	for _, topic := range topics {
 		replies := topic.GetReplies()
 		if len(replies) == 0 {
@@ -294,6 +303,10 @@ func (c *GChatClient) fetchTopicMessages(ctx context.Context, params bridgev2.Fe
 				log.Warn().Msg("googlechat: backfill topic reply has no message id, skipping")
 				continue
 			}
+			// Outside a gap fill a thread sends its head only; bridgev2 fetches the replies through list_messages.
+			if i > 0 && isThread && !forwardGap {
+				break
+			}
 			if !wanted(msg) {
 				continue
 			}
@@ -302,12 +315,15 @@ func (c *GChatClient) fetchTopicMessages(ctx context.Context, params bridgev2.Fe
 				continue
 			}
 			// LastThreadMessage is not read by bridgev2 yet; set for forward compatibility.
-			if i == 0 && isThread {
+			if i == 0 && isThread && !forwardGap {
 				bm.ShouldBackfillThread = true
 				bm.LastThreadMessage = bm.ID
 				if lastID := replies[len(replies)-1].GetId().GetMessageId(); lastID != "" {
 					bm.LastThreadMessage = gcid.MakeMessageID(lastID)
 				}
+			}
+			if msg.GetCreateTime() < anchorMicros {
+				olderThanAnchor = true
 			}
 			messages = append(messages, bm)
 		}
@@ -319,7 +335,7 @@ func (c *GChatClient) fetchTopicMessages(ctx context.Context, params bridgev2.Fe
 
 	// Older history exists unless this page holds the first topic, but without a page token asking
 	// again returns the same page: only report more when this call made progress.
-	hasMore := !params.Forward && !resp.GetContainsFirstTopic() && len(messages) > 0
+	hasMore := !params.Forward && !resp.GetContainsFirstTopic() && len(messages) > 0 && olderThanAnchor
 	return &bridgev2.FetchMessagesResponse{
 		Messages: messages,
 		HasMore:  hasMore,

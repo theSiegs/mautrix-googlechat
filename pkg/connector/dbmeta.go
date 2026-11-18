@@ -8,6 +8,8 @@ type UserLoginMetadata struct {
 	UserAgent string            `json:"user_agent,omitempty"`
 	// Last fully-handled user event stream revision (catch_up_user watermark).
 	Revision int64 `json:"revision,omitempty"`
+	// Revision a catch-up still has to replay from; set when one starts, cleared only when it finishes.
+	CatchUpFrom int64 `json:"catch_up_from,omitempty"`
 	// Space ids with an unanswered invite; gates whether a Matrix accept/decline is sent (invites.go).
 	PendingInvites []string `json:"pending_invites,omitempty"`
 }

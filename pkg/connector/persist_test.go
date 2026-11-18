@@ -111,14 +111,14 @@ func TestDisconnectSavesUnsavedCookies(t *testing.T) {
 }
 
 func TestNoCookieSaveAfterLogout(t *testing.T) {
-	gc, conn, rec, _ := rotatingLogin(t, 30*time.Millisecond)
+	gc, conn, rec, _ := rotatingLogin(t, 150*time.Millisecond)
 	if _, err := conn.GetGroup(context.Background(), &pb.GetGroupRequest{}); err != nil {
 		t.Fatalf("GetGroup: %v", err)
 	}
 	gc.LogoutRemote(context.Background())
 	// A late response on the old conn must not re-arm a save either.
 	conn.GetGroup(context.Background(), &pb.GetGroupRequest{})
-	time.Sleep(120 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 	if rec.count() != 1 || len(rec.last()) != 0 {
 		t.Errorf("saves = %d with %d cookies in the last one, want only the logout save with none", rec.count(), len(rec.last()))
 	}

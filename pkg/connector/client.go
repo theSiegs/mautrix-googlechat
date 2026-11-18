@@ -117,6 +117,9 @@ type GChatClient struct {
 	lastGapFill    time.Time
 	gapFillSpacing time.Duration
 
+	// lastPortalFallback (guarded by mu) is when catchUpPortals last ran.
+	lastPortalFallback time.Time
+
 	listMessagesFn func(ctx context.Context, req *pb.ListMessagesRequest) (*pb.ListMessagesResponse, error)
 
 	getIntentForFn func(ctx context.Context, portal *bridgev2.Portal, sender bridgev2.EventSender, evtType bridgev2.RemoteEventType) (bridgev2.MatrixAPI, bool)
@@ -359,7 +362,7 @@ func (c *GChatClient) handleConnState(ctx context.Context, state gchatmeow.ConnS
 	if state == gchatmeow.ConnStateConnected {
 		c.persistCookies(ctx)
 		// Snapshot now: live events on the new channel move the watermark past the gap.
-		revision := c.getRevision()
+		revision := c.beginCatchUp(ctx)
 		if c.shouldSyncOnConnect() {
 			// Set before spawning, so a quick reconnect can't race an unfinished first sync.
 			c.setSyncInProgress(true)

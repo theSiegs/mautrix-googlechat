@@ -48,7 +48,7 @@ mautrix bridges.
   up to two days: a 403, repeated channel failures or a rejected request
   trigger a session check.
 - The reconnect backoff starts over after a successful connect.
-- Backfill returns every reply of a topic and reports whether older history
+- Backfill reports whether older history
   exists.
 
 ## [26.09.2] - 2026-09-30

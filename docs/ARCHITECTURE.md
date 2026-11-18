@@ -210,9 +210,11 @@ ping are still sent; without the ping nothing is streamed.
 ### 2.9 History: `list_topics`
 
 Room history is one `list_topics` call per fetch, newest page first. Every
-reply the server returns is emitted; replies of a thread carry their thread
-root, and the head of a thread still asks bridgev2 for a `list_messages`
-thread backfill. `page_size_for_replies` is sent only for threaded portals,
+reply of a flat topic is emitted. A thread sends its head, which asks
+bridgev2 for a `list_messages` thread backfill; in a forward gap fill its
+replies are sent inline instead and carry their thread
+root.
+`page_size_for_replies` is sent only for threaded portals,
 so flat chats (one message per topic) keep their request shape.
 
 - Backward: messages older than the oldest bridged one. `HasMore` is
@@ -292,7 +294,9 @@ source are injectable (`ClientOpts.Now`, `Sleep`, `Rand`); tests drive them
 with `gchattest.Clock`.
 
 Events carry `user_revision` / `group_revision`, saved in login and portal
-metadata. `catchUp` (`catch_up_user`) replays missed events through the
+metadata. The revision a catch-up starts from is stored as `catch_up_from`
+until that catch-up finishes, because live events move the watermark past a
+gap an interrupted drain has not replayed. `catchUp` (`catch_up_user`) replays missed events through the
 normal remote-event queue on every reconnect, and after the chat-list sync
 on the first connect when a revision is stored (a restart). The watermark
 only advances after an event is queued successfully.
@@ -301,7 +305,8 @@ When `catch_up_user` gives up (`ABORTED_*`, the 100-page cap, a cursor that
 does not move), each portal of the login is caught up on its own:
 `catch_up_group` from `PortalMetadata.Revision`, and where that also fails or
 no revision is stored, a `ChatResync` that makes bridgev2 run a forward
-backfill (needs `backfill.enabled`).
+backfill (needs `backfill.enabled`). The fallback runs at most once an hour
+per login and its requests are spaced like gap fills.
 
 The realtime channel is the fragile part: Google may black-hole repeated
 programmatic connects from datacenter IPs. One long-lived channel from a

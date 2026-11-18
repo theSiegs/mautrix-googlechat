@@ -76,23 +76,33 @@ func anchorAt(id string, micros int64) *database.Message {
 	return &database.Message{ID: gcid.MakeMessageID(id), Timestamp: gchatmeow.MicrosToTime(micros)}
 }
 
-func TestBackfillEmitsEveryReplyOfATopic(t *testing.T) {
+// TestBackfillThreadSendsHeadAndGapFillSendsReplies: history leaves replies to the thread backfill, a gap fill inlines them.
+func TestBackfillThreadSendsHeadAndGapFillSendsReplies(t *testing.T) {
 	resp, sent := fixtureFetch(t, "list_topics_threaded.txtpb", threadedBackfillPortal(), bridgev2.FetchMessagesParams{Count: 10})
-	if got := backfillIDs(resp); !sameIDs(got, "topic-a", "reply-a1", "reply-a2", "topic-b") {
-		t.Fatalf("messages = %v, want every reply in chronological order", got)
+	if got := backfillIDs(resp); !sameIDs(got, "topic-a", "topic-b") {
+		t.Fatalf("history messages = %v, want the two topic heads", got)
 	}
-	head, reply := resp.Messages[0], resp.Messages[1]
-	if !head.ShouldBackfillThread || head.LastThreadMessage != "reply-a2" {
-		t.Errorf("thread head: ShouldBackfillThread=%v LastThreadMessage=%q, want true and reply-a2", head.ShouldBackfillThread, head.LastThreadMessage)
-	}
-	if reply.ThreadRoot == nil || *reply.ThreadRoot != "topic-a" {
-		t.Errorf("reply ThreadRoot = %v, want topic-a", reply.ThreadRoot)
-	}
-	if reply.ShouldBackfillThread || resp.Messages[3].ShouldBackfillThread {
-		t.Error("only the head message of a thread may ask for a thread backfill")
+	head := resp.Messages[0]
+	if !head.ShouldBackfillThread || head.LastThreadMessage != "reply-a2" || resp.Messages[1].ShouldBackfillThread {
+		t.Errorf("thread head: ShouldBackfillThread=%v LastThreadMessage=%q, want true and reply-a2, and no flag on the flat topic", head.ShouldBackfillThread, head.LastThreadMessage)
 	}
 	if sent.GetPageSizeForReplies() != threadReplyPageSize || sent.GetPageSizeForTopics() != 10 {
 		t.Errorf("request page sizes = %d topics / %d replies, want 10 / %d", sent.GetPageSizeForTopics(), sent.GetPageSizeForReplies(), threadReplyPageSize)
+	}
+
+	gap, _ := fixtureFetch(t, "list_topics_threaded.txtpb", threadedBackfillPortal(), bridgev2.FetchMessagesParams{
+		Forward: true, Count: 10, AnchorMessage: anchorAt("older", 50),
+	})
+	if got := backfillIDs(gap); !sameIDs(got, "topic-a", "reply-a1", "reply-a2", "topic-b") {
+		t.Fatalf("gap fill = %v, want every reply in chronological order", got)
+	}
+	if reply := gap.Messages[1]; reply.ThreadRoot == nil || *reply.ThreadRoot != "topic-a" {
+		t.Errorf("reply ThreadRoot = %v, want topic-a", reply.ThreadRoot)
+	}
+	for _, m := range gap.Messages {
+		if m.ShouldBackfillThread {
+			t.Errorf("gap-fill message %s asks for a thread backfill; its replies are already inline", m.ID)
+		}
 	}
 }
 
@@ -136,7 +146,7 @@ func TestBackwardBackfillKeepsOnlyWhatIsOlderThanTheAnchor(t *testing.T) {
 	resp, _ := fixtureFetch(t, "list_topics_threaded.txtpb", threadedBackfillPortal(), bridgev2.FetchMessagesParams{
 		Count: 10, AnchorMessage: anchorAt("reply-a2", 300),
 	})
-	if got := backfillIDs(resp); !sameIDs(got, "topic-a", "reply-a1") {
+	if got := backfillIDs(resp); !sameIDs(got, "topic-a") {
 		t.Errorf("backward batch = %v, want only what is older than the anchor", got)
 	}
 }
@@ -148,7 +158,7 @@ func TestForwardGapFillsAreSpacedOut(t *testing.T) {
 		calls = append(calls, time.Now())
 		return &pb.ListTopicsResponse{}, nil
 	})
-	gc.gapFillSpacing = 40 * time.Millisecond
+	gc.gapFillSpacing = 100 * time.Millisecond
 	fetch := func(forward bool) {
 		t.Helper()
 		_, err := gc.FetchMessages(context.Background(), bridgev2.FetchMessagesParams{
@@ -161,12 +171,12 @@ func TestForwardGapFillsAreSpacedOut(t *testing.T) {
 	fetch(true)
 	fetch(true)
 	fetch(true)
-	if gap := calls[2].Sub(calls[0]); gap < 80*time.Millisecond {
-		t.Errorf("three gap fills took %v, want at least two spacings (80ms)", gap)
+	if gap := calls[2].Sub(calls[0]); gap < 150*time.Millisecond {
+		t.Errorf("three gap fills took %v, want about two 100ms spacings", gap)
 	}
 	start := time.Now()
 	fetch(false)
-	if took := time.Since(start); took > 30*time.Millisecond {
+	if took := time.Since(start); took > 90*time.Millisecond {
 		t.Errorf("a backward fetch waited %v, want it unpaced", took)
 	}
 }

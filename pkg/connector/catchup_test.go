@@ -229,6 +229,7 @@ func TestUserCatchUpGivingUpFallsBackPerPortal(t *testing.T) {
 				queueRemoteEventFn:   events.queue,
 				queueChatResyncFn:    events.resync,
 				savePortalRevisionFn: func(context.Context, networkid.PortalKey, int64) {},
+				gapFillSpacing:       time.Millisecond,
 				listPortalsFn: func(context.Context) ([]*bridgev2.Portal, error) {
 					return []*bridgev2.Portal{
 						catchUpTestPortal(okGroup, 50), catchUpTestPortal(abortedGroup, 60), catchUpTestPortal(newGroup, 0),
@@ -266,5 +267,46 @@ func TestUserCatchUpGivingUpFallsBackPerPortal(t *testing.T) {
 				t.Errorf("resynced portals = %v, want the aborted and the revision-less one", got)
 			}
 		})
+	}
+}
+
+// TestInterruptedCatchUpResumesFromItsStart: live events move the watermark, the pending revision keeps the gap.
+func TestInterruptedCatchUpResumesFromItsStart(t *testing.T) {
+	meta := &UserLoginMetadata{Revision: 100}
+	var from []int64
+	fail := true
+	gc := &GChatClient{
+		UserLogin:            newTestUserLogin(meta),
+		saveFn:               func(context.Context) error { return nil },
+		savePortalRevisionFn: func(context.Context, networkid.PortalKey, int64) {},
+		queueRemoteEventFn: func(bridgev2.RemoteEvent) bridgev2.EventHandlingResult {
+			return bridgev2.EventHandlingResultQueued
+		},
+		catchUpUserFn: func(_ context.Context, req *pb.CatchUpUserRequest) (*pb.CatchUpResponse, error) {
+			from = append(from, req.GetRange().GetFromRevisionTimestamp())
+			if fail {
+				return nil, context.DeadlineExceeded
+			}
+			return &pb.CatchUpResponse{Status: pb.CatchUpResponse_COMPLETED.Enum()}, nil
+		},
+	}
+	ctx := context.Background()
+
+	gc.catchUpFrom(ctx, gc.beginCatchUp(ctx))
+	gc.handleGChatEvent(ctx, withUserRevision(messagePostedEvent(dmGroupID("dm-1"), "live", "2002", "hi", 5), 500))
+	if meta.Revision != 500 || meta.CatchUpFrom != 100 {
+		t.Fatalf("after a failed drain and a live event: revision %d, pending %d; want 500 and 100", meta.Revision, meta.CatchUpFrom)
+	}
+
+	fail = false
+	gc.catchUpFrom(ctx, gc.beginCatchUp(ctx))
+	if len(from) != 2 || from[1] != 100 {
+		t.Errorf("catch-up from-revisions = %v, want the retry to start at 100 again", from)
+	}
+	if meta.CatchUpFrom != 0 {
+		t.Errorf("pending revision = %d after a completed drain, want it cleared", meta.CatchUpFrom)
+	}
+	if got := gc.beginCatchUp(ctx); got != 500 {
+		t.Errorf("next catch-up starts at %d, want the watermark 500", got)
 	}
 }
