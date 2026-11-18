@@ -18,6 +18,9 @@ import (
 var _ bridgev2.RoomTopicHandlingNetworkAPI = (*GChatClient)(nil)
 
 func (c *GChatClient) HandleMatrixRoomTopic(ctx context.Context, msg *bridgev2.MatrixRoomTopic) (bool, error) {
+	if c.readOnly() {
+		return false, errReadOnly
+	}
 	group, err := gcid.ParsePortalID(msg.Portal.ID)
 	if err != nil {
 		return false, fmt.Errorf("googlechat: %w", err)

@@ -28,6 +28,9 @@ func targetGaiaID(target bridgev2.GhostOrUserLogin) (string, bool) {
 }
 
 func (c *GChatClient) HandleMatrixMembership(ctx context.Context, msg *bridgev2.MatrixMembershipChange) (*bridgev2.MatrixMembershipResult, error) {
+	if c.readOnly() {
+		return nil, errReadOnly
+	}
 	// Self-membership echoes (e.g. the bridge's own portal-creation join) need no RPC, except
 	// answering a pending space invite (invites.go).
 	if msg.Type == bridgev2.AcceptInvite || msg.Type == bridgev2.RejectInvite {

@@ -16,6 +16,9 @@ var _ bridgev2.RedactionHandlingNetworkAPI = (*GChatClient)(nil)
 
 // HandleMatrixMessageRemove issues delete_message for a bridged message redacted in a portal room.
 func (c *GChatClient) HandleMatrixMessageRemove(ctx context.Context, msg *bridgev2.MatrixMessageRemove) error {
+	if c.readOnly() {
+		return errReadOnly
+	}
 	// Relay mode only: refuse to delete a message another relayed user sent (relayauth.go).
 	if err := checkRelayOwnership(msg.OrigSender, msg.TargetMessage.SenderMXID); err != nil {
 		return err

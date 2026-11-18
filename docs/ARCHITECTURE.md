@@ -182,6 +182,18 @@ which is why every message stores `TimestampMicro` and `TopicID`.
 Mutating responses return `WriteRevision{timestamp}`, used as resync
 watermarks (§4).
 
+`pkg/gchatmeow/endpoints.go` is the one table of RPCs: each entry says
+whether the call mutates the account and whether a 5xx may be retried.
+`api.go` may only call endpoints listed there (a test enforces it).
+
+**Read-only mode** (`network.read_only`): `ClientOpts.ReadOnly` makes every
+mutating RPC, `UploadFile` and `SendStreamEvent` return `ErrReadOnly` before
+any HTTP request. The connector answers Matrix actions with that error,
+drops read receipts and typing silently (`mark_group_readstate` would change
+the read state on the real account) and reports room and provisioning
+capabilities with no outgoing feature. The webchannel's own ack and initial
+ping are still sent; without the ping nothing is streamed.
+
 ### 2.9 History: `list_topics`
 
 Room history is one `list_topics` call per fetch, newest page first. Every

@@ -26,6 +26,9 @@ var _ bridgev2.GroupCreatingNetworkAPI = (*GChatClient)(nil)
 const spaceGroupType = "space"
 
 func (c *GChatClient) CreateGroup(ctx context.Context, params *bridgev2.GroupCreateParams) (*bridgev2.CreateChatResponse, error) {
+	if c.readOnly() {
+		return nil, errReadOnly
+	}
 	log := zerolog.Ctx(ctx)
 	if params.Name == nil || params.Name.Name == "" {
 		return nil, errors.New("googlechat: a space needs a name -- set the Matrix room's name first")

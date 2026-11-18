@@ -148,10 +148,7 @@ func (c *GChatClient) Connect(ctx context.Context) {
 		return
 	}
 
-	conn, err := gchatmeow.NewClient(gchatmeow.ClientOpts{
-		Cookies:   cookies,
-		UserAgent: userAgent,
-	})
+	conn, err := gchatmeow.NewClient(c.Main.clientOpts(cookies, userAgent))
 	if err != nil {
 		zerolog.Ctx(ctx).Err(err).Msg("googlechat: failed to build gchatmeow client from stored metadata")
 		c.reportState(gchatmeow.ConnStateBadCredentials, err)

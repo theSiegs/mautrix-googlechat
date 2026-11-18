@@ -24,6 +24,9 @@ const (
 )
 
 func (c *GChatClient) HandleMute(ctx context.Context, msg *bridgev2.MatrixMute) error {
+	if c.readOnly() {
+		return errReadOnly
+	}
 	group, err := gcid.ParsePortalID(msg.Portal.ID)
 	if err != nil {
 		return fmt.Errorf("googlechat: %w", err)

@@ -190,7 +190,7 @@ func (gl *GChatLogin) SubmitCookies(ctx context.Context, cookies map[string]stri
 		newClient = gchatmeow.NewClient
 	}
 
-	client, err := newClient(gchatmeow.ClientOpts{Cookies: cookies, UserAgent: userAgent})
+	client, err := newClient(gl.Main.clientOpts(cookies, userAgent))
 	if err != nil {
 		return nil, fmt.Errorf("failed to build Google Chat client: %w", err)
 	}

@@ -121,6 +121,9 @@ func createDMRejectedTarget(err error) bool {
 }
 
 func (c *GChatClient) ResolveIdentifier(ctx context.Context, identifier string, createChat bool) (*bridgev2.ResolveIdentifierResponse, error) {
+	if createChat && c.readOnly() {
+		return nil, errReadOnly
+	}
 	identifier = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(identifier), "mailto:"))
 	if identifier == "" {
 		return nil, ErrIdentifierMissing
@@ -183,6 +186,9 @@ func (c *GChatClient) ResolveIdentifier(ctx context.Context, identifier string, 
 
 // CreateChatWithGhost opens the DM with an already-known user; a ghost's id is the gaia id.
 func (c *GChatClient) CreateChatWithGhost(ctx context.Context, ghost *bridgev2.Ghost) (*bridgev2.CreateChatResponse, error) {
+	if c.readOnly() {
+		return nil, errReadOnly
+	}
 	if ghost == nil || ghost.ID == "" {
 		return nil, ErrGhostUnidentified
 	}

@@ -51,6 +51,9 @@ type leaveResult struct {
 }
 
 func (gc *GChatConnector) runLeaveCommand(ctx context.Context, portal *bridgev2.Portal, user *bridgev2.User, args []string) string {
+	if gc.readOnly() {
+		return "The bridge is read-only (network.read_only), so it does not leave or hide chats on Google Chat."
+	}
 	group, err := gcid.ParsePortalID(portal.ID)
 	if err != nil {
 		return fmt.Sprintf("This room's chat id is not a Google Chat one: %v", err)
@@ -72,6 +75,9 @@ func (gc *GChatConnector) runLeaveCommand(ctx context.Context, portal *bridgev2.
 
 // HandleMatrixDeleteChat leaves without confirmation; deleting a space for everyone has no known RPC.
 func (c *GChatClient) HandleMatrixDeleteChat(ctx context.Context, msg *bridgev2.MatrixDeleteChat) error {
+	if c.readOnly() {
+		return errReadOnly
+	}
 	if msg.Content != nil && msg.Content.DeleteForEveryone {
 		return errors.New("googlechat: a space can only be deleted for everyone in Google Chat itself; this can leave it instead")
 	}

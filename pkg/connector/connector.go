@@ -9,6 +9,7 @@ import (
 	"maunium.net/go/mautrix/bridgev2/commands"
 	"maunium.net/go/mautrix/bridgev2/database"
 
+	"github.com/Deniel9204/mautrix-googlechat/pkg/gchatmeow"
 	"github.com/Deniel9204/mautrix-googlechat/pkg/msgconv"
 )
 
@@ -22,6 +23,9 @@ type GChatConnector struct {
 	MaxFileSize int64
 
 	// leavingLoginsFn / removeFromPortalFn are test seams for the leave command.
+	// baseURLs points new clients at a fake server in tests.
+	baseURLs gchatmeow.BaseURLs
+
 	leavingLoginsFn    func(ctx context.Context, portal *bridgev2.Portal, user *bridgev2.User) ([]*GChatClient, error)
 	removeFromPortalFn func(ctx context.Context, portal *bridgev2.Portal, user *bridgev2.User, logins []*GChatClient) error
 }
@@ -87,10 +91,17 @@ var gchatGeneralCaps = &bridgev2.NetworkGeneralCapabilities{
 }
 
 func (gc *GChatConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities {
+	if gc.readOnly() {
+		return gchatGeneralCapsReadOnly
+	}
 	return gchatGeneralCaps
 }
 
 func (gc *GChatConnector) GetBridgeInfoVersion() (info, capabilities int) {
+	// A different capabilities version makes bridgev2 resend room features when read_only is toggled.
+	if gc.readOnly() {
+		return 1, 2
+	}
 	return 1, 1
 }
 

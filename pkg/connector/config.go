@@ -15,7 +15,10 @@ var ExampleConfig string
 
 type Config struct {
 	DisplaynameTemplate string `yaml:"displayname_template"`
-	InitialChatSync     int    `yaml:"initial_chat_sync"`
+
+	// ReadOnly makes the bridge receive only: nothing that changes the Google account is ever sent.
+	ReadOnly        bool `yaml:"read_only"`
+	InitialChatSync int  `yaml:"initial_chat_sync"`
 
 	// DisableOutboundMedia rejects Matrix media sends; Google's /uploads has been returning HTTP 500.
 	DisableOutboundMedia bool `yaml:"disable_outbound_media"`
@@ -54,6 +57,7 @@ func (c *Config) FormatDisplayname(ctx context.Context, params DisplaynameParams
 func upgradeConfig(helper configupgrade.Helper) {
 	helper.Copy(configupgrade.Str, "displayname_template")
 	helper.Copy(configupgrade.Int, "initial_chat_sync")
+	helper.Copy(configupgrade.Bool, "read_only")
 	helper.Copy(configupgrade.Bool, "disable_outbound_media")
 	helper.Copy(configupgrade.Bool, "disable_inline_url_media")
 	helper.Copy(configupgrade.Bool, "skip_leave_confirmation")

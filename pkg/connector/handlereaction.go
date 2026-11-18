@@ -33,6 +33,9 @@ func (c *GChatClient) PreHandleMatrixReaction(_ context.Context, msg *bridgev2.M
 // HandleMatrixReaction issues update_reaction (ADD) and caches the resolved topic id in
 // ReactionMetadata for later removal.
 func (c *GChatClient) HandleMatrixReaction(ctx context.Context, msg *bridgev2.MatrixReaction) (*database.Reaction, error) {
+	if c.readOnly() {
+		return nil, errReadOnly
+	}
 	group, err := gcid.ParsePortalID(msg.Portal.ID)
 	if err != nil {
 		return nil, fmt.Errorf("googlechat: %w", err)
@@ -76,6 +79,9 @@ func (c *GChatClient) HandleMatrixReaction(ctx context.Context, msg *bridgev2.Ma
 // HandleMatrixReactionRemove issues update_reaction (REMOVE). The emoji is EmojiID, not the DB
 // row's Emoji field, which bridgev2 leaves empty when EmojiID is set.
 func (c *GChatClient) HandleMatrixReactionRemove(ctx context.Context, msg *bridgev2.MatrixReactionRemove) error {
+	if c.readOnly() {
+		return errReadOnly
+	}
 	// Relay mode only: refuse to remove another relayed user's reaction.
 	if err := checkRelayOwnership(msg.OrigSender, msg.TargetReaction.SenderMXID); err != nil {
 		return err

@@ -33,6 +33,10 @@ func readTimeMicros(msg *bridgev2.MatrixReadReceipt) int64 {
 
 // HandleMatrixReadReceipt marks the portal's group read on Google Chat via mark_group_readstate.
 func (c *GChatClient) HandleMatrixReadReceipt(ctx context.Context, msg *bridgev2.MatrixReadReceipt) error {
+	// Dropped silently: marking a chat read would change the read state on the real account.
+	if c.readOnly() {
+		return nil
+	}
 	group, err := gcid.ParsePortalID(msg.Portal.ID)
 	if err != nil {
 		return fmt.Errorf("googlechat: %w", err)

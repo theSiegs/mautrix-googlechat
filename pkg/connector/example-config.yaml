@@ -14,4 +14,10 @@ disable_inline_url_media: false
 # Make the `leave` command act at once instead of waiting for `leave confirm`.
 # Leaving a private space can't be undone without a new invite.
 skip_leave_confirmation: false
+# Receive only. Nothing that changes your Google account is ever sent: no
+# messages, edits, deletions, reactions, uploads, membership or room changes,
+# and no read receipts or typing notifications (so reading in Matrix does not
+# mark chats read on Google Chat). The bridge refuses these before any
+# request leaves the process. Meant for archive-style setups.
+read_only: false
 # History backfill is configured in the top-level `backfill:` section.

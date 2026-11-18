@@ -28,6 +28,10 @@ func typingContext(group gcid.GroupID, topicID string) *pb.TypingContext {
 
 // HandleMatrixTyping issues set_typing_state; bridgev2 calls it once per start and once per stop.
 func (c *GChatClient) HandleMatrixTyping(ctx context.Context, msg *bridgev2.MatrixTyping) error {
+	// Dropped silently in read-only mode.
+	if c.readOnly() {
+		return nil
+	}
 	group, err := gcid.ParsePortalID(msg.Portal.ID)
 	if err != nil {
 		return fmt.Errorf("googlechat: %w", err)

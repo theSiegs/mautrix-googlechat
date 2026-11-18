@@ -18,6 +18,9 @@ var _ bridgev2.EditHandlingNetworkAPI = (*GChatClient)(nil)
 // HandleMatrixEdit issues edit_message for a bridged message edited in a portal room.
 // On success it records the server's last_edit_time so the inbound echo dedups.
 func (c *GChatClient) HandleMatrixEdit(ctx context.Context, edit *bridgev2.MatrixEdit) error {
+	if c.readOnly() {
+		return errReadOnly
+	}
 	// Relay mode only: refuse to rewrite a message another relayed user sent (see relayauth.go).
 	if err := checkRelayOwnership(edit.OrigSender, edit.EditTarget.SenderMXID); err != nil {
 		return err

@@ -29,6 +29,9 @@ var errOutboundMediaDisabled = bridgev2.WrapErrorInStatus(errors.New("outbound m
 // HandleMatrixMessage sends a Matrix message to Google Chat via create_topic, or
 // create_message when msg.ThreadRoot is set.
 func (c *GChatClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.MatrixMessage) (*bridgev2.MatrixMessageResponse, error) {
+	if c.readOnly() {
+		return nil, errReadOnly
+	}
 	isMedia := isOutboundMediaMsgType(msg.Content.MsgType)
 	if msg.Content.MsgType != event.MsgText && msg.Content.MsgType != event.MsgNotice && !isMedia {
 		return nil, bridgev2.ErrUnsupportedMessageType

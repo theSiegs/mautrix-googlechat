@@ -121,5 +121,8 @@ func roomFeatures(portal *bridgev2.Portal) *event.RoomFeatures {
 
 // GetCapabilities implements bridgev2.NetworkAPI.
 func (c *GChatClient) GetCapabilities(_ context.Context, portal *bridgev2.Portal) *event.RoomFeatures {
+	if c.readOnly() {
+		return gchatCapsReadOnly
+	}
 	return roomFeatures(portal)
 }
