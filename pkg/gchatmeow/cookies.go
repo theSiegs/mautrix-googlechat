@@ -80,7 +80,9 @@ func (j *cookieJar) absorb(resp *http.Response, path string) {
 			cookiePath = path
 		}
 		store, persisted := j.cookies, true
-		if strings.Contains(cookiePath, webchannelPathMarker) {
+		// A COMPASS from a webchannel request is the channel's own, whatever Path it claims.
+		fromChannel := c.Name == "COMPASS" && strings.Contains(path, webchannelPathMarker)
+		if fromChannel || strings.Contains(cookiePath, webchannelPathMarker) {
 			store, persisted = j.channel, false
 		}
 		old, had := store[c.Name]

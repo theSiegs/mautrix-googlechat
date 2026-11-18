@@ -48,12 +48,12 @@ var _ bridgev2.LoginProcessCookies = (*GChatLogin)(nil)
 // loginFieldUserAgent is an optional pseudo-field carrying the browser UA; not a cookie.
 const loginFieldUserAgent = "user_agent"
 
-// loginCookieFields returns the 5 required cookies plus the optional UA field.
+// loginCookieFields returns the 5 required cookies, the optional session family and the optional UA field.
 // CookieDomain is a browser-side extraction hint, not the jar domain: SSID, SID
 // and HSID live on .google.com. COMPASS has no Pattern because bridgev2 checks it
 // before missing keys and echoes the value into the room unredacted.
 func loginCookieFields() []bridgev2.LoginCookieField {
-	fields := make([]bridgev2.LoginCookieField, 0, len(gchatmeow.RequiredCookies)+1)
+	fields := make([]bridgev2.LoginCookieField, 0, len(gchatmeow.RequiredCookies)+len(gchatmeow.OptionalCookies)+1)
 	for _, key := range gchatmeow.RequiredCookies {
 		cookieDomain := ".google.com"
 		if gchatmeow.CookieIsDomainSpecific(key) {
@@ -68,6 +68,15 @@ func loginCookieFields() []bridgev2.LoginCookieField {
 					Name:         key,
 					CookieDomain: cookieDomain,
 				},
+			},
+		})
+	}
+	// Optional: without the rotating __Secure-*PSIDTS cookies newer accounts get the sign-in page.
+	for _, key := range gchatmeow.OptionalCookies {
+		fields = append(fields, bridgev2.LoginCookieField{
+			ID: key,
+			Sources: []bridgev2.LoginCookieFieldSource{
+				{Type: bridgev2.LoginCookieTypeCookie, Name: key, CookieDomain: ".google.com"},
 			},
 		})
 	}
@@ -92,7 +101,8 @@ func (gl *GChatLogin) Start(_ context.Context) (*bridgev2.LoginStep, error) {
 		StepID: LoginStepIDCookies,
 		// Rendered once as markdown, so a link is fine here.
 		Instructions: "Enter a JSON object with your cookies, or a cURL command copied from browser devtools.\n\n" +
-			"Step-by-step instructions for extracting the five cookies (COMPASS, SSID, SID, OSID, HSID) from Chrome or Firefox: " +
+			"A cURL command is best: it also carries the optional rotating cookies (such as __Secure-1PSIDTS) that some accounts need.\n\n" +
+			"Step-by-step instructions for extracting the five required cookies (COMPASS, SSID, SID, OSID, HSID) from Chrome or Firefox: " +
 			"https://github.com/Deniel9204/mautrix-googlechat/blob/main/docs/authentication.md",
 		CookiesParams: &bridgev2.LoginCookiesParams{
 			URL: "https://chat.google.com/",

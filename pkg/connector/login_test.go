@@ -52,8 +52,9 @@ func TestLoginStartStepShape(t *testing.T) {
 
 	fields := step.CookiesParams.Fields
 
-	if len(fields) != len(gchatmeow.RequiredCookies)+1 {
-		t.Fatalf("got %d fields, want %d", len(fields), len(gchatmeow.RequiredCookies)+1)
+	wantFields := len(gchatmeow.RequiredCookies) + len(gchatmeow.OptionalCookies) + 1
+	if len(fields) != wantFields {
+		t.Fatalf("got %d fields, want %d", len(fields), wantFields)
 	}
 	for i, wantID := range gchatmeow.RequiredCookies {
 		f := fields[i]
@@ -84,6 +85,16 @@ func TestLoginStartStepShape(t *testing.T) {
 		// No Pattern: bridgev2 checks it first and echoes the value unredacted.
 		if f.Pattern != "" {
 			t.Errorf("field[%d] (%s).Pattern = %q, want empty (a pattern mismatch echoes the value unredacted)", i, f.ID, f.Pattern)
+		}
+	}
+
+	for i, wantID := range gchatmeow.OptionalCookies {
+		f := fields[len(gchatmeow.RequiredCookies)+i]
+		if f.ID != wantID || f.Required || f.Pattern != "" {
+			t.Errorf("optional field %d = %+v, want optional %q with no pattern", i, f, wantID)
+		}
+		if len(f.Sources) != 1 || f.Sources[0].Name != wantID || f.Sources[0].Type != bridgev2.LoginCookieTypeCookie {
+			t.Errorf("optional field %q sources = %+v, want one cookie source of the same name", wantID, f.Sources)
 		}
 	}
 
@@ -337,5 +348,36 @@ func TestSubmitCookiesPassesSanitizedValuesToTheClient(t *testing.T) {
 	}
 	if _, ok := got.Cookies[loginFieldUserAgent]; ok {
 		t.Error("the User-Agent pseudo-field reached ClientOpts.Cookies")
+	}
+}
+
+// TestSubmitCookiesKeepsTheOptionalSessionCookies: a JSON paste with the wider family reaches the client intact.
+func TestSubmitCookiesKeepsTheOptionalSessionCookies(t *testing.T) {
+	var got gchatmeow.ClientOpts
+	abort := errors.New("stop before any network")
+	gl := &GChatLogin{
+		newClientFn: func(opts gchatmeow.ClientOpts) (*gchatmeow.Client, error) {
+			got = opts
+			return nil, abort
+		},
+	}
+	in := map[string]string{"COMPASS": "c", "SSID": "s1", "SID": "s2", "OSID": "o1", "HSID": "h1"}
+	for _, name := range gchatmeow.OptionalCookies {
+		in[name] = "value-of-" + name
+	}
+	if _, err := gl.SubmitCookies(context.Background(), in); !errors.Is(err, abort) {
+		t.Fatalf("err = %v, want the seam's abort error", err)
+	}
+	for _, name := range gchatmeow.OptionalCookies {
+		if got.Cookies[name] != "value-of-"+name {
+			t.Errorf("ClientOpts.Cookies[%q] = %q, want it passed through with its case kept", name, got.Cookies[name])
+		}
+	}
+	client, err := gchatmeow.NewClient(got)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if stored := client.Cookies(); stored["__Secure-1PSIDTS"] == "" || len(stored) != len(in) {
+		t.Errorf("the client stores %d cookies, want all %d with __Secure-1PSIDTS present", len(stored), len(in))
 	}
 }
